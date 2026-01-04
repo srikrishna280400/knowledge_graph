@@ -8,7 +8,7 @@
       body {
         margin: 0;
         height: 100%;
-        background: #0b1220;
+        background: #050814;
         overflow: hidden;
       }
       #g {
@@ -42,7 +42,6 @@
       }
     </style>
 
-    <!-- 3d-force-graph supports nodes/links JSON and DAG mode. [web:695] -->
     <script src="https://cdn.jsdelivr.net/npm/3d-force-graph"></script>
   </head>
 
@@ -52,10 +51,10 @@
       <div id="stats" style="margin-top: 6px">Loading…</div>
 
       <div style="margin-top: 6px">
-        <label
-          ><input id="bridges" type="checkbox" /> Show related bridges (network
-          mode)</label
-        >
+        <label>
+          <input id="bridges" type="checkbox" />
+          Show related bridges (network mode)
+        </label>
       </div>
 
       <div style="margin-top: 6px; opacity: 0.85">
@@ -73,11 +72,14 @@
         const errEl = document.getElementById("err");
 
         try {
-          const res = await fetch("./graph90.json");
+          // Load JSON safely (avoid "Unexpected token <" when 404 happens)
+          const url = "./graph90.json";
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
           const g = await res.json();
 
           // Convert your graph90.json to 3d-force-graph format:
-          // nodes need "id"; links use "source"/"target" by default. [web:690][web:695]
+          // nodes need "id"; links use "source"/"target" by default.
           const nodes = g.nodes.map((n) => ({
             ...n,
             id: n.key,
@@ -91,7 +93,7 @@
             target: e.target,
           }));
 
-          // For a clean DAG/tree view, remove "related" edges (they can create cycles). [web:695]
+          // For a clean DAG/tree view, remove "related" edges (they can create cycles).
           const treeLinks = g.edges
             .filter((e) => (e.edge_type || e.label || "") !== "related")
             .map((e) => ({ ...e, source: e.source, target: e.target }));
@@ -99,22 +101,34 @@
           statsEl.textContent = `Nodes: ${nodes.length} | Links(tree): ${treeLinks.length} | Links(all): ${allLinks.length}`;
 
           const Graph = ForceGraph3D()(document.getElementById("g"))
-            .backgroundColor("#0b1220")
+            .backgroundColor("#050814")
             .graphData({ nodes, links: treeLinks })
-            // DAG layout constraints (top-down). [web:695]
+
+            // Layout
             .dagMode("td")
-            .dagLevelDistance(25)
-            // If a cycle is found, don't crash. [web:695]
+            .dagLevelDistance(28)
             .onDagError((loop) =>
               console.warn("DAG cycle detected (best-effort layout):", loop)
             )
-            // Visuals
-            .nodeColor((n) => n.color || "#94a3b8")
-            .nodeVal((n) => n.val)
+
+            // Nodes: bigger + brighter
+            .nodeColor((n) => n.color || "#00e5ff")
+            .nodeVal((n) => (n.val || 1) * 3.2) // increase to 4–6 if you want even larger
+            .nodeOpacity(1)
             .nodeLabel((n) => `${n.name}${n.kind ? "\n" + n.kind : ""}`)
-            .linkColor((l) => l.color || "rgba(148,163,184,0.22)")
-            .linkWidth((l) => l.size || 1)
-            // Click-to-focus camera. [web:690]
+
+            // Links: thicker + brighter
+            .linkColor((l) => l.color || "rgba(0,229,255,0.55)")
+            .linkWidth((l) => (l.size || 1) * 2)
+            .linkOpacity(0.75)
+
+            // Extra punch: moving particles along links
+            .linkDirectionalParticles(2)
+            .linkDirectionalParticleWidth(2)
+            .linkDirectionalParticleSpeed(0.01)
+            .linkDirectionalParticleColor(() => "rgba(255,255,255,0.85)")
+
+            // Click-to-focus camera
             .onNodeClick((node) => {
               const distance = 120;
               const distRatio =
@@ -136,21 +150,21 @@
             Graph.cameraPosition(HOME_CAM, null, 800);
           });
 
-          // Toggle: tree (DAG) <-> full network (with related bridges). [web:695][web:690]
+          // Toggle: tree (DAG) <-> full network (with related bridges)
           document
             .getElementById("bridges")
             .addEventListener("change", (ev) => {
               const show = ev.target.checked;
 
               if (show) {
-                Graph.dagMode(null); // disable DAG constraints for general graphs. [web:695]
-                Graph.graphData({ nodes, links: allLinks }); // live update. [web:690]
-                Graph.d3ReheatSimulation(); // restart forces. [web:695]
+                Graph.dagMode(null); // disable DAG constraints for general graphs
+                Graph.graphData({ nodes, links: allLinks });
+                Graph.d3ReheatSimulation();
                 statsEl.textContent = `Nodes: ${nodes.length} | Network links: ${allLinks.length}`;
               } else {
-                Graph.graphData({ nodes, links: treeLinks }); // back to pure hierarchy. [web:690]
-                Graph.dagMode("td").dagLevelDistance(25); // restore DAG layout. [web:695]
-                Graph.d3ReheatSimulation(); // restart forces. [web:695]
+                Graph.graphData({ nodes, links: treeLinks });
+                Graph.dagMode("td").dagLevelDistance(28);
+                Graph.d3ReheatSimulation();
                 statsEl.textContent = `Nodes: ${nodes.length} | Links(tree): ${treeLinks.length} | Links(all): ${allLinks.length}`;
               }
             });
