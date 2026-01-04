@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/graphology/0.25.4/graphology.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/graphology-layout-forceatlas2@0.10.1/build/graphology-layout-forceatlas2.umd.js"></script>
+    <style>
+      body {
+        margin: 0;
+        background: #020617;
+        overflow: hidden;
+        color: white;
+        font-family: sans-serif;
+      }
+      #container {
+        width: 100vw;
+        height: 100vh;
+      }
+      #status {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.8);
+        padding: 10px;
+        font-size: 12px;
+        border: 1px solid #334155;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">Loading Brain...</div>
+    <div id="container"></div>
+
+    <script>
+      fetch("data.json")
+        .then((res) => res.json())
+        .then((data) => {
+          document.getElementById(
+            "status"
+          ).innerText = `Nodes: ${data.nodes.length} | Edges: ${data.edges.length}`;
+
+          const graph = new graphology.Graph();
+          data.nodes.forEach((n) => graph.addNode(n.key, n.attributes));
+          data.edges.forEach((e) => {
+            if (graph.hasNode(e.source) && graph.hasNode(e.target)) {
+              graph.addEdge(e.source, e.target, e.attributes);
+            }
+          });
+
+          const renderer = new Sigma(
+            graph,
+            document.getElementById("container"),
+            {
+              defaultEdgeType: "line",
+              labelColor: { color: "#ffffff" },
+              edgeColor: { color: "#64748b" },
+            }
+          );
+
+          // RUN GRAVITY IMMEDIATELY
+          const fa2 = new forceAtlas2.FA2Layout(graph, {
+            settings: {
+              gravity: 0.5,
+              scalingRatio: 20,
+              slowDown: 10,
+              barnesHutOptimize: true,
+            },
+          });
+          fa2.start();
+
+          // Stop after 10 seconds so your computer doesn't explode
+          setTimeout(() => {
+            fa2.stop();
+            document.getElementById("status").innerText += " (Frozen)";
+          }, 15000);
+        });
+    </script>
+  </body>
+</html>

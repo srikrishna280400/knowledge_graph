@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Cognitive Map90 (3D)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0b1220;
+        overflow: hidden;
+      }
+      #g {
+        width: 100%;
+        height: 100%;
+      }
+      #hud {
+        position: fixed;
+        left: 10px;
+        top: 10px;
+        z-index: 10;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        color: #e5e7eb;
+        font-family: system-ui, sans-serif;
+        font-size: 12px;
+        max-width: 460px;
+      }
+      #hud b {
+        font-weight: 700;
+      }
+      #err {
+        color: #fecaca;
+        margin-top: 6px;
+        white-space: pre-wrap;
+      }
+      label {
+        user-select: none;
+      }
+    </style>
+
+    <!-- 3d-force-graph supports nodes/links JSON and DAG mode. [web:695] -->
+    <script src="https://cdn.jsdelivr.net/npm/3d-force-graph"></script>
+  </head>
+
+  <body>
+    <div id="hud">
+      <b>Map90 (3D)</b>
+      <div id="stats" style="margin-top: 6px">Loading…</div>
+
+      <div style="margin-top: 6px">
+        <label
+          ><input id="bridges" type="checkbox" /> Show related bridges (network
+          mode)</label
+        >
+      </div>
+
+      <div style="margin-top: 6px; opacity: 0.85">
+        Drag: rotate • Wheel: zoom • Right-drag: pan • Click node: focus
+      </div>
+
+      <div id="err"></div>
+    </div>
+
+    <div id="g"></div>
+
+    <script>
+      (async function () {
+        const statsEl = document.getElementById("stats");
+        const errEl = document.getElementById("err");
+
+        try {
+          const res = await fetch("./graph90.json");
+          const g = await res.json();
+
+          // Convert your graph90.json to 3d-force-graph format:
+          // nodes need "id"; links use "source"/"target" by default. [web:690][web:695]
+          const nodes = g.nodes.map((n) => ({
+            ...n,
+            id: n.key,
+            name: n.label || n.key,
+            val: n.size || 1,
+          }));
+
+          const allLinks = g.edges.map((e) => ({
+            ...e,
+            source: e.source,
+            target: e.target,
+          }));
+
+          // For a clean DAG/tree view, remove "related" edges (they can create cycles). [web:695]
+          const treeLinks = g.edges
+            .filter((e) => (e.edge_type || e.label || "") !== "related")
+            .map((e) => ({ ...e, source: e.source, target: e.target }));
+
+          statsEl.textContent = `Nodes: ${nodes.length} | Links(tree): ${treeLinks.length} | Links(all): ${allLinks.length}`;
+
+          const Graph = ForceGraph3D()(document.getElementById("g"))
+            .backgroundColor("#0b1220")
+            .graphData({ nodes, links: treeLinks })
+            // DAG layout constraints (top-down). [web:695]
+            .dagMode("td")
+            .dagLevelDistance(25)
+            // If a cycle is found, don't crash. [web:695]
+            .onDagError((loop) =>
+              console.warn("DAG cycle detected (best-effort layout):", loop)
+            )
+            // Visuals
+            .nodeColor((n) => n.color || "#94a3b8")
+            .nodeVal((n) => n.val)
+            .nodeLabel((n) => `${n.name}${n.kind ? "\n" + n.kind : ""}`)
+            .linkColor((l) => l.color || "rgba(148,163,184,0.22)")
+            .linkWidth((l) => l.size || 1)
+            // Click-to-focus camera. [web:690]
+            .onNodeClick((node) => {
+              const distance = 120;
+              const distRatio =
+                1 + distance / Math.hypot(node.x, node.y, node.z);
+              Graph.cameraPosition(
+                {
+                  x: node.x * distRatio,
+                  y: node.y * distRatio,
+                  z: node.z * distRatio,
+                },
+                node,
+                800
+              );
+            });
+
+          const HOME_CAM = { x: 0, y: 40, z: 220 };
+
+          Graph.onBackgroundClick(() => {
+            Graph.cameraPosition(HOME_CAM, null, 800);
+          });
+
+          // Toggle: tree (DAG) <-> full network (with related bridges). [web:695][web:690]
+          document
+            .getElementById("bridges")
+            .addEventListener("change", (ev) => {
+              const show = ev.target.checked;
+
+              if (show) {
+                Graph.dagMode(null); // disable DAG constraints for general graphs. [web:695]
+                Graph.graphData({ nodes, links: allLinks }); // live update. [web:690]
+                Graph.d3ReheatSimulation(); // restart forces. [web:695]
+                statsEl.textContent = `Nodes: ${nodes.length} | Network links: ${allLinks.length}`;
+              } else {
+                Graph.graphData({ nodes, links: treeLinks }); // back to pure hierarchy. [web:690]
+                Graph.dagMode("td").dagLevelDistance(25); // restore DAG layout. [web:695]
+                Graph.d3ReheatSimulation(); // restart forces. [web:695]
+                statsEl.textContent = `Nodes: ${nodes.length} | Links(tree): ${treeLinks.length} | Links(all): ${allLinks.length}`;
+              }
+            });
+
+          // Initial camera
+          Graph.cameraPosition({ x: 0, y: 40, z: 220 });
+        } catch (e) {
+          console.error(e);
+          errEl.textContent = String(e && e.stack ? e.stack : e);
+          statsEl.textContent = "Failed to render";
+        }
+      })();
+    </script>
+  </body>
+</html>
