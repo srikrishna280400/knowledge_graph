@@ -1,0 +1,9 @@
+{
+  "urls": [
+    "https://www.reddit.com/r/Python/comments/abc123/test_post/"
+  ],
+  "meta": {
+    "source": "reddit",
+    "page": "https://www.reddit.com/user/testuser/saved/"
+  }
+}

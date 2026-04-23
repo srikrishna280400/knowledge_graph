@@ -1,0 +1,12 @@
+LOAD DATABASE
+  FROM sqlite:///mnt/d/My\ Docs/Product\ Management/P4/Working\ Code/max\ sophisticated/backend/ubuntu/graph_store.sqlite
+  INTO postgresql://postgres.fblurkqmgvtxanjecroa:y%2F%5Cgyaseni0@aws-1-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require
+
+ WITH data only,
+      create no tables,
+      include no drop,
+      batch rows = 500,
+      prefetch rows = 1000,
+      reset no sequences
+
+ SET search_path to 'graph,public';

@@ -1,0 +1,208 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Reddit Import Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 24px;
+      }
+      button {
+        padding: 10px 14px;
+        cursor: pointer;
+        margin-right: 10px;
+        margin-bottom: 10px;
+      }
+      pre {
+        margin-top: 16px;
+        padding: 12px;
+        background: #f5f5f5;
+        border: 1px solid #ddd;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Reddit Import Test</h1>
+    <button id="pingBtn">Ping Bridge</button>
+    <button id="startBtn">Import Reddit</button>
+    <pre id="out">Page loaded.</pre>
+
+    <script>
+      const out = document.getElementById("out");
+
+      function write(obj) {
+        out.textContent =
+          typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+      }
+
+      function append(obj) {
+        const text =
+          typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+        out.textContent += "\n\n" + text;
+      }
+
+      append({
+        step: "page_ready",
+        origin: window.location.origin,
+        href: window.location.href,
+      });
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window) return;
+        if (event.origin !== window.location.origin) return;
+
+        const data = event.data;
+        if (!data) return;
+
+        append({
+          step: "window_message_received",
+          data,
+        });
+
+        if (data.source !== "reddit-saved-downloader-extension") return;
+      });
+
+      function pingBridge() {
+        append({
+          step: "posting_ping",
+        });
+
+        window.postMessage(
+          {
+            source: "reddit-saved-downloader-page",
+            type: "PING_EXTENSION",
+          },
+          window.location.origin,
+        );
+      }
+
+      function startImport() {
+        append({
+          step: "posting_init_orchestration",
+        });
+
+        window.postMessage(
+          {
+            source: "reddit-saved-downloader-page",
+            type: "INIT_ORCHESTRATION",
+            settings: {
+              limit: "10",
+              limitAll: false,
+              subreddits: "",
+              filterMode: "include",
+              formats: {
+                csv: false,
+                json: true,
+                html: false,
+              },
+            },
+          },
+          window.location.origin,
+        );
+      }
+
+      document.getElementById("pingBtn").addEventListener("click", pingBridge);
+      document
+        .getElementById("startBtn")
+        .addEventListener("click", startImport);
+
+      setTimeout(pingBridge, 500);
+    </script>
+
+    <hr />
+
+    <h2>LinkedIn</h2>
+    <button id="import-linkedin-btn">Import LinkedIn</button>
+    <pre id="linkedin-log"></pre>
+
+    <script>
+      const logEl = document.getElementById("linkedin-log");
+
+      function log(obj) {
+        logEl.textContent += JSON.stringify(obj, null, 2) + "\n\n";
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window) return;
+        if (event.origin !== window.location.origin) return;
+
+        if (event.data?.source === "linkedin-saved-post-hero-extension") {
+          log({ step: "window_message_received", data: event.data });
+        }
+      });
+
+      document
+        .getElementById("import-linkedin-btn")
+        .addEventListener("click", () => {
+          window.postMessage(
+            {
+              source: "linkedin-saved-post-hero-page",
+              type: "INIT_LINKEDIN_ORCHESTRATION",
+              settings: {},
+            },
+            window.location.origin,
+          );
+
+          log({ step: "posted_init_linkedin" });
+        });
+
+      window.postMessage(
+        {
+          source: "linkedin-saved-post-hero-page",
+          type: "PING_EXTENSION",
+        },
+        window.location.origin,
+      );
+
+      log({ step: "posted_ping_linkedin" });
+    </script>
+
+    <hr />
+
+    <h2>X / Twitter</h2>
+    <button id="import-x-btn">Import X/Twitter</button>
+    <pre id="x-log"></pre>
+
+    <script>
+      const xLogEl = document.getElementById("x-log");
+
+      function xLog(obj) {
+        xLogEl.textContent += JSON.stringify(obj, null, 2) + "\n\n";
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window) return;
+        if (event.origin !== window.location.origin) return;
+
+        if (event.data?.source === "x-bookmarks-importer-extension") {
+          xLog({ step: "window_message_received", data: event.data });
+        }
+      });
+
+      document.getElementById("import-x-btn").addEventListener("click", () => {
+        window.postMessage(
+          {
+            source: "x-bookmarks-importer-page",
+            type: "INIT_X_ORCHESTRATION",
+            settings: {},
+          },
+          window.location.origin,
+        );
+
+        xLog({ step: "posted_init_x" });
+      });
+
+      window.postMessage(
+        {
+          source: "x-bookmarks-importer-page",
+          type: "PING_EXTENSION",
+        },
+        window.location.origin,
+      );
+
+      xLog({ step: "posted_ping_x" });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+﻿{
+  "source_key": "manual_test",
+  "label": "supabase smoke test",
+  "profile_id": "eb58f2a5-9d66-498c-b0bd-2b34a0357541",
+  "payload": {
+    "urls": [
+      "https://example.com",
+      "https://www.python.org"
+    ]
+  }
+}

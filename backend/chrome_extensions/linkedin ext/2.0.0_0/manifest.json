@@ -1,0 +1,45 @@
+{
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "LinkedIn Saved Post Hero"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "js": ["linkedin-scraper.js", "content-script.js"],
+      "matches": ["https://www.linkedin.com/my-items/saved-posts/*"],
+      "run_at": "document_idle"
+    },
+    {
+      "js": ["page-bridge.js"],
+      "matches": [
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*",
+        "http://app.localhost/*"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:3000/*",
+      "http://127.0.0.1:3000/*",
+      "http://app.localhost/*"
+    ]
+  },
+  "description": "Save and organize your LinkedIn saved posts with ease",
+  "host_permissions": [
+    "https://*.linkedin.com/*",
+    "http://127.0.0.1:12108/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*"
+  ],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtCguYHj+YA1E9V3M9mVqg3Ixd4k/3VEzM7Gm5NSLIoLBtmXGmFpMGi6AyOovLyYKciN9qOnRmQ4XHg6OwRxplEKsxaBXW0W8a89ci5G/q569YugI1oD6Y/nQlWzb536hNMEHwsNFLttUrUWNgYcB85sjWNN4Kwjv7WZ+mH4gIykhJdLF5/MoqCgy9ZPZs0Fchyx0/4tRXJrp7/+CSZZ9//JeAzLtr+jS05hH4o/eW+pJ7xERT5gK8g41LOErZ1MpyuKzbA4lcvVcu41/eQ4VnsubHO6b7h5vZ+fznHTtByMLJqBUbku3znaq9xUuRPAD2OaDLXFD9fPnP7scrTuY7QIDAQAB",
+  "manifest_version": 3,
+  "name": "LinkedIn Saved Post Hero",
+  "permissions": ["storage", "activeTab", "tabs"],
+  "update_url": "https://clients2.google.com/service/update2/crx",
+  "version": "2.1.0"
+}

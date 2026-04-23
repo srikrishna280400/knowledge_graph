@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reddit Saved Downloader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Reddit Downloader</h1>
+      <p class="subtitle">Export your saved posts</p>
+    </header>
+
+    <main>
+      <div class="card">
+        <div class="form-group">
+          <label for="limit">Number of Posts</label>
+          <div class="input-group">
+            <input type="number" id="limit" min="1" placeholder="e.g. 1000" value="100">
+            <label class="checkbox-inline">
+              <input type="checkbox" id="limit-all"> Download All
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="subreddits">Subreddit Filter (Optional)</label>
+          <textarea id="subreddits" placeholder="e.g. r/funny, r/pics (comma separated)"></textarea>
+          <div class="radio-group">
+            <label>
+              <input type="radio" name="filterMode" value="include" checked> Include
+            </label>
+            <label>
+              <input type="radio" name="filterMode" value="exclude"> Exclude
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Export Formats</label>
+          <div class="checkbox-group">
+            <label class="checkbox-container">
+              <input type="checkbox" id="format-csv" checked>
+              <span class="checkmark"></span>
+              CSV
+            </label>
+            <label class="checkbox-container">
+              <input type="checkbox" id="format-json" checked>
+              <span class="checkmark"></span>
+              JSON
+            </label>
+            <label class="checkbox-container">
+              <input type="checkbox" id="format-html" checked>
+              <span class="checkmark"></span>
+              HTML (Visual)
+            </label>
+          </div>
+        </div>
+
+        <button id="start-btn" class="primary-btn">
+          <span>Start Download</span>
+        </button>
+      </div>
+
+      <div id="status-area" class="hidden">
+        <div class="progress-bar-bg">
+          <div id="progress-bar" class="progress-bar-fill" style="width: 0%"></div>
+        </div>
+        <p id="status-text">Ready to start</p>
+      </div>
+    </main>
+
+    <footer>
+      <p>Reddit Saved Downloader v1.0</p>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

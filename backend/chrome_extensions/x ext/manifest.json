@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "X Bookmarks Importer",
+  "version": "1.0.0",
+  "description": "Import X/Twitter bookmarks into the backend",
+  "action": {
+    "default_title": "X Bookmarks Importer",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["storage", "tabs", "activeTab"],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "http://127.0.0.1:12108/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "http://app.localhost/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/i/bookmarks*",
+        "https://twitter.com/i/bookmarks*"
+      ],
+      "js": ["x_scraper.js", "content-script.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*",
+        "http://app.localhost/*"
+      ],
+      "js": ["page-bridge.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:3000/*",
+      "http://127.0.0.1:3000/*",
+      "http://app.localhost/*"
+    ]
+  }
+}

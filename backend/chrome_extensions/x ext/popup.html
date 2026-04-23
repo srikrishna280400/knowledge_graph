@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>X Bookmarks Importer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        width: 360px;
+        font:
+          14px/1.4 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        background: #0f1419;
+        color: #e7e9ea;
+      }
+
+      .wrap {
+        padding: 16px;
+      }
+
+      h1 {
+        font-size: 18px;
+        margin: 0 0 6px 0;
+      }
+
+      .sub {
+        color: #8b98a5;
+        margin-bottom: 16px;
+      }
+
+      .card {
+        background: #16181c;
+        border: 1px solid #2f3336;
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+
+      .row {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+
+      button {
+        flex: 1;
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      button.primary {
+        background: #1d9bf0;
+        color: white;
+      }
+
+      button.secondary {
+        background: #2f3336;
+        color: white;
+      }
+
+      button.danger {
+        background: #5c1a1b;
+        color: white;
+      }
+
+      .label {
+        color: #8b98a5;
+        font-size: 12px;
+        margin-bottom: 4px;
+      }
+
+      .value {
+        font-size: 14px;
+        word-break: break-word;
+      }
+
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+
+      #status-message {
+        margin-top: 8px;
+        color: #8b98a5;
+        min-height: 18px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>X Bookmarks Importer</h1>
+      <div class="sub">Checkpoint-first import to backend</div>
+
+      <div class="card">
+        <div class="row">
+          <button id="start-btn" class="primary">Start Import</button>
+          <button id="stop-btn" class="secondary">Stop</button>
+        </div>
+        <div class="row">
+          <button id="refresh-btn" class="secondary">Refresh Status</button>
+          <button id="clear-btn" class="danger">Clear Checkpoint</button>
+        </div>
+        <div id="status-message"></div>
+      </div>
+
+      <div class="card">
+        <div class="label">Collected URLs</div>
+        <div id="total-count" class="value">0</div>
+      </div>
+
+      <div class="card">
+        <div class="label">Pending Import</div>
+        <div id="pending-import" class="value">false</div>
+      </div>
+
+      <div class="card">
+        <div class="label">Last Scrape</div>
+        <div id="last-scrape" class="value mono">-</div>
+      </div>
+
+      <div class="card">
+        <div class="label">Last Import</div>
+        <div id="last-import" class="value mono">-</div>
+      </div>
+
+      <div class="card">
+        <div class="label">Last Finalize Reason</div>
+        <div id="last-reason" class="value mono">-</div>
+      </div>
+
+      <div class="card">
+        <div class="label">Last Import Result</div>
+        <div id="last-result" class="value mono">-</div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,12 @@
+backend/.venv/
+backend/.venv-wsl/
+backend/.playwright-social-profile/
+backend/__pycache__/
+backend/.vscode/
+backend/data/*.sqlite
+backend/data/*.sqlite-shm
+backend/data/*.sqlite-wal
+backend/data/*.bak
+backend/ubuntu/*.sqlite
+backend/.env
+*.pyc

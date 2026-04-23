@@ -1,0 +1,53 @@
+{
+  "action": {
+    "default_icon": {
+      "128": "assets/icon128.png",
+      "16": "assets/icon16.png",
+      "48": "assets/icon48.png"
+    },
+    "default_popup": "popup/popup.html"
+  },
+  "background": {
+    "service_worker": "scripts/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "js": ["scripts/content.js"],
+      "matches": ["*://*.reddit.com/*"]
+    },
+    {
+      "js": ["scripts/page_bridge.js"],
+      "matches": [
+        "http://localhost:3000/*",
+        "https://your-frontend-domain.com/*"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "description": "Download your saved Reddit posts in CSV, JSON, and HTML formats.",
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:3000/*",
+      "https://your-frontend-domain.com/*"
+    ]
+  },
+  "host_permissions": [
+    "https://www.reddit.com/*",
+    "http://localhost:3000/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*",
+    "http://127.0.0.1:12108/*"
+  ],
+  "icons": {
+    "128": "assets/icon128.png",
+    "16": "assets/icon16.png",
+    "48": "assets/icon48.png"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAulV2f21WPVLZFIAL1W75psHbHwS71mwkC8uPCN+B0ppb8qjTiAeNufUWfiBnYUJo6RYKrkQ2DSjQ1jrJfXmwMvALUjENICx/yB55uCvEVj6fKzoL5m5h7kw/LqcnrrFZ54y5PrqOUxgX21R7LyQJFK0b6N6oj/+9jKWos6M8r3uVol3kcsts/j75W4yrdf6VvFBbLBG0Z7fvqBaTlfYu8v4O6CliqseDEQ9KUyl00d693z3GjE+oKDHKFiW8RGbnfaUJH+QQ3h311mBUwhqPDvtn8Uf3k22N99v25i38yu5KK2ZqUPGdvPAHYV7YUJpdnMObwKQbKJTsQ9g0sajtjQIDAQAB",
+  "manifest_version": 3,
+  "name": "Reddit Saved Downloader",
+  "permissions": ["activeTab", "storage", "downloads"],
+  "update_url": "https://clients2.google.com/service/update2/crx",
+  "version": "1.0.1"
+}
