@@ -31,7 +31,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install playwright "psycopg[binary]" beautifulsoup4
+          pip install playwright "psycopg[binary]" beautifulsoup4 numpy sentence-transformers python-dotenv
 
       - name: Install Playwright browsers
         run: |
