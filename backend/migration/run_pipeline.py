@@ -674,6 +674,11 @@ def main() -> None:
     graph_pg_engine = mirror_engine
     graph_pg_schema = (os.getenv("GRAPH_PG_SCHEMA") or "graph").strip() or "graph"
 
+    if app_mirror_engine is None:
+        raise RuntimeError("Supabase mirror DB is required for runner acceptance checks")
+    if graph_pg_engine is None:
+        raise RuntimeError("Supabase graph mirror DB is required for ingest acceptance checks")
+
     ensure_pipeline_tables(engine)
 
     run_id = create_run(
@@ -681,7 +686,7 @@ def main() -> None:
         profile_id=profile_id,
         batch_file=str(batch_out),
         graph_db=str(graph_db_target),
-        )
+    )
 
     current_step = "init"
 
@@ -690,19 +695,16 @@ def main() -> None:
         mark_step_start(engine, run_id, profile_id, current_step)
 
         crawl_before_local = fetch_saved_items_snapshot(app_local_engine)
-        crawl_before_mirror = (
-            fetch_saved_items_snapshot(app_mirror_engine)
-            if app_mirror_engine is not None else {}
-        )
+        crawl_before_mirror = fetch_saved_items_snapshot(app_mirror_engine)
 
         run_cmd([
-    sys.executable, "-m", "app.crawl_all",
-    "--limit", str(run_limit),
-    "--reddit-limit", str(args.reddit_limit),
-    "--linkedin-limit", str(args.linkedin_limit),
-    "--x-limit", str(args.x_limit),
-    "--generic-limit", str(args.generic_limit),
-])
+            sys.executable, "-m", "app.crawl_all",
+            "--limit", str(run_limit),
+            "--reddit-limit", str(args.reddit_limit),
+            "--linkedin-limit", str(args.linkedin_limit),
+            "--x-limit", str(args.x_limit),
+            "--generic-limit", str(args.generic_limit),
+        ])
 
         crawl_after_local = fetch_saved_items_by_ids(
             app_local_engine,
@@ -710,35 +712,18 @@ def main() -> None:
         )
         touched_ids = detect_crawl_touched_ids(crawl_before_local, crawl_after_local)
 
-        if app_mirror_engine is not None:
-            crawl_after_mirror = fetch_saved_items_by_ids(app_mirror_engine, touched_ids)
-            bad = []
-            for sid in touched_ids:
-                local_row = crawl_after_local.get(sid)
-                mirror_row = crawl_after_mirror.get(sid)
-                if (
-                    not local_row
-                    or local_row != mirror_row
-                    or local_row.get("status") not in POST_CRAWL_STATUSES
-                ):
-                    bad.append(sid)
+        crawl_after_mirror = fetch_saved_items_by_ids(app_mirror_engine, touched_ids)
+        bad = [
+            sid for sid in touched_ids
+            if crawl_after_mirror.get(sid, {}).get("status") not in POST_CRAWL_STATUSES
+        ]
 
-            if bad:
-                restore_saved_items(app_local_engine, crawl_before_local, touched_ids)
-                restore_saved_items(app_mirror_engine, crawl_before_mirror, touched_ids)
-                raise RuntimeError(
-                    f"crawl verification failed; reverted {len(touched_ids)} rows"
-                )
-        else:
-            bad = [
-                sid for sid in touched_ids
-                if crawl_after_local.get(sid, {}).get("status") not in POST_CRAWL_STATUSES
-            ]
-            if bad:
-                restore_saved_items(app_local_engine, crawl_before_local, touched_ids)
-                raise RuntimeError(
-                    f"crawl verification failed locally; reverted {len(touched_ids)} rows"
-                )
+        if bad:
+            restore_saved_items(app_local_engine, crawl_before_local, touched_ids)
+            restore_saved_items(app_mirror_engine, crawl_before_mirror, touched_ids)
+            raise RuntimeError(
+                f"crawl verification failed in mirror; reverted {len(touched_ids)} rows"
+            )
 
         mark_step_done(engine, run_id, current_step)
 
@@ -755,15 +740,9 @@ def main() -> None:
         if not batch_ids:
             raise RuntimeError("make_batch_all produced no batch ids")
 
-        local_batched = fetch_llm_batched_ids(app_local_engine, str(batch_out))
-        mirror_batched = (
-            fetch_llm_batched_ids(app_mirror_engine, str(batch_out))
-            if app_mirror_engine is not None else set(batch_ids)
-        )
+        mirror_batched = fetch_llm_batched_ids(app_mirror_engine, str(batch_out))
 
         try:
-            if set(batch_ids) - local_batched:
-                raise RuntimeError("missing local llm_batched rows after make_batch_all")
             if set(batch_ids) - mirror_batched:
                 raise RuntimeError("missing mirror llm_batched rows after make_batch_all")
 
@@ -779,12 +758,18 @@ def main() -> None:
             )
         except Exception:
             delete_llm_batched_ids(app_local_engine, batch_ids)
-            if app_mirror_engine is not None:
-                delete_llm_batched_ids(app_mirror_engine, batch_ids)
+            delete_llm_batched_ids(app_mirror_engine, batch_ids)
             delete_file_if_exists(batch_out)
             raise
 
-        mark_step_done(engine, run_id, current_step, local_path=str(batch_out), storage_bucket=args.storage_bucket, storage_key=batch_storage_key,)
+        mark_step_done(
+            engine,
+            run_id,
+            current_step,
+            local_path=str(batch_out),
+            storage_bucket=args.storage_bucket,
+            storage_key=batch_storage_key,
+        )
 
         current_step = "run_groq_all"
         mark_step_start(engine, run_id, profile_id, current_step)
@@ -798,24 +783,11 @@ def main() -> None:
         groq_good_ids = groq_success_ids(groq_out)
 
         try:
-            local_outputs = fetch_llm_output_ids(app_local_engine, groq_ids)
-            local_processed = fetch_llm_processed_ids(app_local_engine, groq_good_ids)
+            mirror_outputs = fetch_llm_output_ids(app_mirror_engine, groq_ids)
+            mirror_processed = fetch_llm_processed_ids(app_mirror_engine, groq_good_ids)
 
-            mirror_outputs = (
-                fetch_llm_output_ids(app_mirror_engine, groq_ids)
-                if app_mirror_engine is not None else set(groq_ids)
-            )
-            mirror_processed = (
-                fetch_llm_processed_ids(app_mirror_engine, groq_good_ids)
-                if app_mirror_engine is not None else set(groq_good_ids)
-            )
-
-            if set(groq_ids) - local_outputs:
-                raise RuntimeError("missing local llm_outputs rows after run_groq_all")
             if set(groq_ids) - mirror_outputs:
                 raise RuntimeError("missing mirror llm_outputs rows after run_groq_all")
-            if set(groq_good_ids) - local_processed:
-                raise RuntimeError("missing local llm_processed rows after run_groq_all")
             if set(groq_good_ids) - mirror_processed:
                 raise RuntimeError("missing mirror llm_processed rows after run_groq_all")
 
@@ -831,14 +803,20 @@ def main() -> None:
             )
         except Exception:
             delete_llm_output_ids(app_local_engine, groq_ids)
-            if app_mirror_engine is not None:
-                delete_llm_output_ids(app_mirror_engine, groq_ids)
+            delete_llm_output_ids(app_mirror_engine, groq_ids)
             delete_file_if_exists(groq_out)
             delete_file_if_exists(groq_incomplete_out)
             delete_file_if_exists(groq_csv_out)
             raise
 
-        mark_step_done(engine, run_id, current_step, local_path=str(groq_out), storage_bucket=args.storage_bucket, storage_key=groq_storage_key,)
+        mark_step_done(
+            engine,
+            run_id,
+            current_step,
+            local_path=str(groq_out),
+            storage_bucket=args.storage_bucket,
+            storage_key=groq_storage_key,
+        )
 
         current_step = "normalize_groq_output"
         mark_step_start(engine, run_id, profile_id, current_step)
@@ -863,7 +841,14 @@ def main() -> None:
             delete_file_if_exists(normalized_out)
             raise
 
-        mark_step_done(engine, run_id, current_step, local_path=str(normalized_out), storage_bucket=args.storage_bucket, storage_key=normalized_storage_key,)
+        mark_step_done(
+            engine,
+            run_id,
+            current_step,
+            local_path=str(normalized_out),
+            storage_bucket=args.storage_bucket,
+            storage_key=normalized_storage_key,
+        )
 
         current_step = "graph_ingest_incremental"
         mark_step_start(engine, run_id, profile_id, current_step)
@@ -877,14 +862,12 @@ def main() -> None:
         if graph_db_target.exists():
             shutil.copy2(graph_db_target, graph_backup)
 
-        graph_before_pg = None
-        if graph_pg_engine is not None:
-            graph_before_pg = fetch_graph_presence_pg(
-                graph_pg_engine,
-                graph_pg_schema,
-                source_ids,
-                concept_ids,
-            )
+        graph_before_pg = fetch_graph_presence_pg(
+            graph_pg_engine,
+            graph_pg_schema,
+            source_ids,
+            concept_ids,
+        )
 
         run_cmd([
             sys.executable, "-m", "app.graph_ingest_incremental",
@@ -893,69 +876,52 @@ def main() -> None:
         ])
 
         try:
-            local_counts = fetch_graph_batch_counts_sqlite(graph_db_target, batch_id)
-            local_presence = fetch_graph_presence_sqlite(
-                graph_db_target,
+            pg_counts = fetch_graph_batch_counts_pg(
+                graph_pg_engine,
+                graph_pg_schema,
+                batch_id,
+            )
+            pg_presence = fetch_graph_presence_pg(
+                graph_pg_engine,
+                graph_pg_schema,
                 source_ids,
                 concept_ids,
             )
 
-            if local_counts["source_payloads"] < len(source_ids):
+            if pg_counts["source_payloads"] < len(source_ids):
                 raise RuntimeError(
-                    "local graph ingest verification failed: source_payloads shortfall"
+                    "mirror graph ingest verification failed: source_payloads shortfall"
                 )
-            if set(source_ids) - local_presence["source_nodes"]:
+            if set(source_ids) - pg_presence["source_nodes"]:
                 raise RuntimeError(
-                    "local graph ingest verification failed: missing source_nodes"
+                    "mirror graph ingest verification failed: missing source_nodes"
                 )
-            if concept_ids and (set(concept_ids) - local_presence["concept_nodes"]):
+            if concept_ids and (set(concept_ids) - pg_presence["concept_nodes"]):
                 raise RuntimeError(
-                    "local graph ingest verification failed: missing concept_nodes"
+                    "mirror graph ingest verification failed: missing concept_nodes"
                 )
-
-            if graph_pg_engine is not None:
-                pg_counts = fetch_graph_batch_counts_pg(
-                    graph_pg_engine,
-                    graph_pg_schema,
-                    batch_id,
-                )
-                pg_presence = fetch_graph_presence_pg(
-                    graph_pg_engine,
-                    graph_pg_schema,
-                    source_ids,
-                    concept_ids,
-                )
-
-                if pg_counts["source_payloads"] < len(source_ids):
-                    raise RuntimeError(
-                        "mirror graph ingest verification failed: source_payloads shortfall"
-                    )
-                if set(source_ids) - pg_presence["source_nodes"]:
-                    raise RuntimeError(
-                        "mirror graph ingest verification failed: missing source_nodes"
-                    )
-                if concept_ids and (set(concept_ids) - pg_presence["concept_nodes"]):
-                    raise RuntimeError(
-                        "mirror graph ingest verification failed: missing concept_nodes"
-                    )
 
         except Exception:
             rollback_graph_sqlite_from_backup(graph_db_target, graph_backup)
-            if graph_pg_engine is not None and graph_before_pg is not None:
-                rollback_graph_pg(
-                    graph_pg_engine,
-                    graph_pg_schema,
-                    batch_id,
-                    source_ids,
-                    concept_ids,
-                    graph_before_pg,
-                )
+            rollback_graph_pg(
+                graph_pg_engine,
+                graph_pg_schema,
+                batch_id,
+                source_ids,
+                concept_ids,
+                graph_before_pg,
+            )
             raise
         finally:
             if graph_backup.exists():
                 graph_backup.unlink()
 
-        mark_step_done(engine, run_id, current_step, local_path=str(graph_db_target),)
+        mark_step_done(
+            engine,
+            run_id,
+            current_step,
+            local_path=str(graph_db_target),
+        )
 
         mark_run_done(
             engine,
@@ -976,6 +942,5 @@ def main() -> None:
         mark_step_failed(engine, run_id, current_step, repr(e))
         raise
 
-
 if __name__ == "__main__":
-    main()
+    main()""
