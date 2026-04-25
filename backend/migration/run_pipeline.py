@@ -54,17 +54,17 @@ POST_CRAWL_STATUSES = ("crawled", "crawled_wayback", "title_only")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--profile-id", default="local-dev-profile", help="app.profiles.id")
-    p.add_argument(
-        "--batch-out",
-        default=str(make_timestamped_batch_path(PRIMARY)),
-        help="Batch JSONL path to create",
-    )
-    p.add_argument("--db", default="data/graph_store.sqlite", help="Graph ingest target")
+    p.add_argument("--profile-id", required=True, help="app.profiles.id")
+    p.add_argument("--batch-out", required=True, help="Batch JSONL path to create")
+    p.add_argument("--db", required=True, help="Graph ingest target")
     p.add_argument("--pipeline-db-url", default="", help="Postgres URL override")
     p.add_argument("--storage-bucket", default="pipeline-intermediate")
     p.add_argument("--storage-prefix", default="runs")
-    p.add_argument("--run-limit", type=int, default=RUN_LIMIT, help="Max URLs for this pipeline run")
+    p.add_argument("--run-limit", type=int, default=RUN_LIMIT)
+    p.add_argument("--reddit-limit", type=int, default=0)
+    p.add_argument("--linkedin-limit", type=int, default=0)
+    p.add_argument("--x-limit", type=int, default=0)
+    p.add_argument("--generic-limit", type=int, default=0)
     return p.parse_args()
 
 
@@ -696,9 +696,13 @@ def main() -> None:
         )
 
         run_cmd([
-            sys.executable, "-m", "app.crawl_all",
-            "--limit", str(run_limit),
-        ])
+    sys.executable, "-m", "app.crawl_all",
+    "--limit", str(run_limit),
+    "--reddit-limit", str(args.reddit_limit),
+    "--linkedin-limit", str(args.linkedin_limit),
+    "--x-limit", str(args.x_limit),
+    "--generic-limit", str(args.generic_limit),
+])
 
         crawl_after_local = fetch_saved_items_by_ids(
             app_local_engine,
