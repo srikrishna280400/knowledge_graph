@@ -48,6 +48,11 @@ LOCAL_ENV = load_local_env()
 
 RUN_LIMIT = 2
 
+PIPELINE_REDDIT_CRAWL_LIMIT = 1
+PIPELINE_LINKEDIN_CRAWL_LIMIT = 0
+PIPELINE_X_CRAWL_LIMIT = 0
+PIPELINE_GENERIC_CRAWL_LIMIT = 1
+
 RETRYABLE_STATUSES = ("pending_crawl", "crawl_failed", "extraction_failed")
 POST_CRAWL_STATUSES = ("crawled", "crawled_wayback", "title_only")
 
@@ -61,10 +66,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--storage-bucket", default="pipeline-intermediate")
     p.add_argument("--storage-prefix", default="runs")
     p.add_argument("--run-limit", type=int, default=RUN_LIMIT)
-    p.add_argument("--reddit-limit", type=int, default=0)
-    p.add_argument("--linkedin-limit", type=int, default=0)
-    p.add_argument("--x-limit", type=int, default=0)
-    p.add_argument("--generic-limit", type=int, default=0)
+    p.add_argument("--reddit-limit", type=int, default=None)
+    p.add_argument("--linkedin-limit", type=int, default=None)
+    p.add_argument("--x-limit", type=int, default=None)
+    p.add_argument("--generic-limit", type=int, default=None)
     return p.parse_args()
 
 
@@ -645,6 +650,9 @@ def rollback_graph_pg(pg_engine, schema: str, batch_id: str, source_ids: list[st
             )
             conn.execute(stmt, {"ids": new_concept_nodes})
 
+def resolved_cap(cli_value: int | None, default_cap: int) -> int:
+    return cli_value if cli_value is not None else default_cap
+
 
 def main() -> None:
     args = parse_args()
@@ -697,13 +705,18 @@ def main() -> None:
         crawl_before_local = fetch_saved_items_snapshot(app_local_engine)
         crawl_before_mirror = fetch_saved_items_snapshot(app_mirror_engine)
 
+        pipeline_reddit_limit = resolved_cap(args.reddit_limit, PIPELINE_REDDIT_CRAWL_LIMIT)
+        pipeline_linkedin_limit = resolved_cap(args.linkedin_limit, PIPELINE_LINKEDIN_CRAWL_LIMIT)
+        pipeline_x_limit = resolved_cap(args.x_limit, PIPELINE_X_CRAWL_LIMIT)
+        pipeline_generic_limit = resolved_cap(args.generic_limit, PIPELINE_GENERIC_CRAWL_LIMIT)
+
         run_cmd([
             sys.executable, "-m", "app.crawl_all",
             "--limit", str(run_limit),
-            "--reddit-limit", str(args.reddit_limit),
-            "--linkedin-limit", str(args.linkedin_limit),
-            "--x-limit", str(args.x_limit),
-            "--generic-limit", str(args.generic_limit),
+            "--reddit-limit", str(pipeline_reddit_limit),
+            "--linkedin-limit", str(pipeline_linkedin_limit),
+            "--x-limit", str(pipeline_x_limit),
+            "--generic-limit", str(pipeline_generic_limit),
         ])
 
         crawl_after_local = fetch_saved_items_by_ids(
