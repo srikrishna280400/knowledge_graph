@@ -685,16 +685,20 @@ def resolve_single_profile_id(engine) -> str:
 def main() -> None:
     args = parse_args()
     
-    reddit_limit = 0 if args.reddit_limit is None else args.reddit_limit
-    linkedin_limit = 0 if args.linkedin_limit is None else args.linkedin_limit
-    x_limit = 0 if args.x_limit is None else args.x_limit
-    generic_limit = 0 if args.generic_limit is None else args.generic_limit
+    pipeline_reddit_limit = resolved_cap(args.reddit_limit, PIPELINE_REDDIT_CRAWL_LIMIT)
+    pipeline_linkedin_limit = resolved_cap(args.linkedin_limit, PIPELINE_LINKEDIN_CRAWL_LIMIT)
+    pipeline_x_limit = resolved_cap(args.x_limit, PIPELINE_X_CRAWL_LIMIT)
+    pipeline_generic_limit = resolved_cap(args.generic_limit, PIPELINE_GENERIC_CRAWL_LIMIT)
+    
     pipeline_batch_limit = (
-        reddit_limit
-        + linkedin_limit
-        + x_limit
-        + generic_limit
-    )
+        pipeline_reddit_limit
+        + pipeline_linkedin_limit
+        + pipeline_x_limit
+        + pipeline_generic_limit
+        )
+    
+    if pipeline_batch_limit <= 0:
+        raise ValueError("pipeline_batch_limit must be > 0")
 
     run_limit = args.run_limit
     if run_limit <= 0:
