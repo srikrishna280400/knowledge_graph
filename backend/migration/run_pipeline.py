@@ -49,7 +49,7 @@ LOCAL_ENV = load_local_env()
 
 RUN_LIMIT = 2
 
-PIPELINE_REDDIT_CRAWL_LIMIT = 2
+PIPELINE_REDDIT_CRAWL_LIMIT = 1
 PIPELINE_LINKEDIN_CRAWL_LIMIT = 0
 PIPELINE_X_CRAWL_LIMIT = 0
 PIPELINE_GENERIC_CRAWL_LIMIT = 1
@@ -684,22 +684,37 @@ def resolve_single_profile_id(engine) -> str:
 
 def main() -> None:
     args = parse_args()
+    
+    reddit_limit = 0 if args.reddit_limit is None else args.reddit_limit
+    linkedin_limit = 0 if args.linkedin_limit is None else args.linkedin_limit
+    x_limit = 0 if args.x_limit is None else args.x_limit
+    generic_limit = 0 if args.generic_limit is None else args.generic_limit
+    pipeline_batch_limit = (
+        reddit_limit
+        + linkedin_limit
+        + x_limit
+        + generic_limit
+    )
+
     run_limit = args.run_limit
     if run_limit <= 0:
         raise ValueError("--run-limit must be > 0")
-
+    
     project_root = Path(__file__).resolve().parents[1]
-    
+
     profile_id = args.profile_id.strip() or resolve_single_profile_id(get_primary_sqlite_engine())
-    
+
     batch_out_value = (args.batch_out or "").strip()
     if batch_out_value:
         batch_out = resolve_path(batch_out_value, project_root)
     else:
         batch_out = make_timestamped_batch_path(PRIMARY)
+
     db_value = (args.db or "").strip()
-    
-    graph_db_target = get_db_path(GRAPH_STORE)
+    if db_value:
+        graph_db_target = resolve_path(db_value, project_root)
+    else:
+        graph_db_target = get_db_path(GRAPH_STORE)
 
     graph_db_target.parent.mkdir(parents=True, exist_ok=True)
     batch_out.parent.mkdir(parents=True, exist_ok=True)
@@ -783,7 +798,7 @@ def main() -> None:
         run_cmd([
             sys.executable, "-m", "app.make_batch_all",
             "--out", str(batch_out),
-            "--limit", str(run_limit),
+            "--limit", str(pipeline_batch_limit),
         ])
         app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
