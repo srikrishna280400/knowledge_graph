@@ -15,6 +15,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 from dotenv import load_dotenv, dotenv_values
 from sqlalchemy import bindparam, create_engine, text
+from sqlalchemy.pool import NullPool
 from .config import PRIMARY, get_db_path, make_timestamped_batch_path
 from .db_factory import build_sqlite_url, get_primary_mirror_engine
 from .pipeline_state import (
@@ -226,11 +227,23 @@ def persist_intermediate_artifact(
 
 
 def get_primary_sqlite_engine():
+    db_path = get_db_path(PRIMARY).resolve()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"[run_pipeline] local sqlite = {db_path}")
     return create_engine(
-        build_sqlite_url(get_db_path(PRIMARY)),
+        build_sqlite_url(db_path),
         future=True,
         pool_pre_ping=True,
+        poolclass=NullPool,
     )
+
+
+def refresh_primary_sqlite_engine(engine):
+    try:
+        engine.dispose()
+    except Exception:
+        pass
+    return get_primary_sqlite_engine()
 
 
 def jsonl_rows(path: Path) -> list[dict]:
@@ -718,6 +731,7 @@ def main() -> None:
             "--x-limit", str(pipeline_x_limit),
             "--generic-limit", str(pipeline_generic_limit),
         ])
+        app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
         crawl_after_local = fetch_saved_items_by_ids(
             app_local_engine,
@@ -748,6 +762,7 @@ def main() -> None:
             "--out", str(batch_out),
             "--limit", str(run_limit),
         ])
+        app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
         batch_ids = jsonl_ids(batch_out)
         if not batch_ids:
@@ -791,6 +806,7 @@ def main() -> None:
             sys.executable, "-m", "app.run_groq_all",
             "--in", str(batch_out),
         ])
+        app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
         groq_ids = jsonl_ids(groq_out)
         groq_good_ids = groq_success_ids(groq_out)
