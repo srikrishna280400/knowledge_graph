@@ -193,8 +193,11 @@ def insert_llm_batched(session, saved_item_id: str, canonical_url: str, batch_fi
     if is_sqlite:
         session.execute(
             text(f"""
-            INSERT OR IGNORE INTO {table_ref} (saved_item_id, canonical_url, batch_file)
+            INSERT INTO {table_ref} (saved_item_id, canonical_url, batch_file)
             VALUES (:sid, :url, :bf)
+            ON CONFLICT(saved_item_id) DO UPDATE SET
+                canonical_url = excluded.canonical_url,
+                batch_file = excluded.batch_file
             """),
             {"sid": saved_item_id, "url": canonical_url, "bf": batch_file},
         )
@@ -203,7 +206,9 @@ def insert_llm_batched(session, saved_item_id: str, canonical_url: str, batch_fi
             text(f"""
             INSERT INTO {table_ref} (saved_item_id, canonical_url, batch_file)
             VALUES (:sid, :url, :bf)
-            ON CONFLICT (saved_item_id) DO NOTHING
+            ON CONFLICT (saved_item_id) DO UPDATE SET
+                canonical_url = EXCLUDED.canonical_url,
+                batch_file = EXCLUDED.batch_file
             """),
             {"sid": saved_item_id, "url": canonical_url, "bf": batch_file},
         )
