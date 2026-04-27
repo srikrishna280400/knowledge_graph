@@ -172,8 +172,8 @@ def ensure_llm_batched_table(session):
     bind = session.get_bind()
     is_sqlite = bind.dialect.name == "sqlite"
     table_ref = "llm_batched" if is_sqlite else "app.llm_batched"
-    batched_at_type = "TEXT" if is_sqlite else "TIMESTAMPTZ"
-    batched_at_default = "(datetime('now'))" if is_sqlite else "CURRENT_TIMESTAMP"
+    batched_at_type = "TIMESTAMPTZ"
+    batched_at_default = "CURRENT_TIMESTAMP"
 
     session.execute(text(f"""
     CREATE TABLE IF NOT EXISTS {table_ref} (
