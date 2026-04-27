@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from dotenv import load_dotenv, dotenv_values
 from sqlalchemy import bindparam, create_engine, text
 from sqlalchemy.pool import NullPool
-from .config import PRIMARY, get_db_path, make_timestamped_batch_path
+from .config import GRAPH_STORE, PRIMARY, get_db_path, make_timestamped_batch_path
 from .db_factory import build_sqlite_url, get_primary_mirror_engine
 from .pipeline_state import (
     create_run,
@@ -60,9 +60,9 @@ POST_CRAWL_STATUSES = ("crawled", "crawled_wayback", "title_only")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--profile-id", required=True, help="app.profiles.id")
-    p.add_argument("--batch-out", required=True, help="Batch JSONL path to create")
-    p.add_argument("--db", required=True, help="Graph ingest target")
+    p.add_argument("--profile-id", default="", help="app.profiles.id")
+    p.add_argument("--batch-out", default="", help="Batch JSONL path to create")
+    p.add_argument("--db", default="", help="Graph ingest target")
     p.add_argument("--pipeline-db-url", default="", help="Postgres URL override")
     p.add_argument("--storage-bucket", default="pipeline-intermediate")
     p.add_argument("--storage-prefix", default="runs")
@@ -667,6 +667,21 @@ def resolved_cap(cli_value: int | None, default_cap: int) -> int:
     return cli_value if cli_value is not None else default_cap
 
 
+def resolve_single_profile_id(engine) -> str:
+    table = "profiles" if engine.dialect.name == "sqlite" else "app.profiles"
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(f"SELECT id FROM {table} ORDER BY created_at ASC LIMIT 2")
+        ).fetchall()
+    if not rows:
+        raise RuntimeError(f"No profiles found in {table}")
+    if len(rows) != 1:
+        raise RuntimeError(
+            f"Expected exactly one profile in {table}, found {len(rows)}"
+        )
+    return str(rows[0][0])
+
+
 def main() -> None:
     args = parse_args()
     run_limit = args.run_limit
@@ -674,9 +689,17 @@ def main() -> None:
         raise ValueError("--run-limit must be > 0")
 
     project_root = Path(__file__).resolve().parents[1]
-    profile_id = args.profile_id
-    batch_out = resolve_path(args.batch_out, project_root)
-    graph_db_target = resolve_path(args.db, project_root)
+    
+    profile_id = args.profile_id.strip() or resolve_single_profile_id(get_primary_sqlite_engine())
+    
+    batch_out_value = (args.batch_out or "").strip()
+    if batch_out_value:
+        batch_out = resolve_path(batch_out_value, project_root)
+    else:
+        batch_out = make_timestamped_batch_path(PRIMARY)
+    db_value = (args.db or "").strip()
+    
+    graph_db_target = get_db_path(GRAPH_STORE)
 
     graph_db_target.parent.mkdir(parents=True, exist_ok=True)
     batch_out.parent.mkdir(parents=True, exist_ok=True)
