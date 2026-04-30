@@ -927,14 +927,15 @@ def main() -> None:
         pipeline_x_limit = resolved_cap(args.x_limit, PIPELINE_X_CRAWL_LIMIT)
         pipeline_generic_limit = resolved_cap(args.generic_limit, PIPELINE_GENERIC_CRAWL_LIMIT)
 
-        run_cmd([
-            sys.executable, "-m", "app.crawl_all",
-            "--limit", str(run_limit),
-            "--reddit-limit", str(pipeline_reddit_limit),
-            "--linkedin-limit", str(pipeline_linkedin_limit),
-            "--x-limit", str(pipeline_x_limit),
-            "--generic-limit", str(pipeline_generic_limit),
-        ])
+        crawl_cmd = [
+    sys.executable, "-m", "app.crawl_all",
+    "--reddit-limit", str(pipeline_reddit_limit),
+    "--linkedin-limit", str(pipeline_linkedin_limit),
+    "--x-limit", str(pipeline_x_limit),
+    "--generic-limit", str(pipeline_generic_limit),
+]
+        run_cmd(crawl_cmd)
+        
         app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
         crawl_after_local = fetch_saved_items_by_ids(
