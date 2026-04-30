@@ -375,8 +375,7 @@ def main():
                 }
 
                 line = json.dumps(payload, ensure_ascii=False)
-                f.write(line + ""
-                "")
+                print(line, file=f)
                 
                 insert_llm_batched(session, it.id, url, str(out_path))
                 session.commit()
