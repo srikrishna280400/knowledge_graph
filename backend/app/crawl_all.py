@@ -350,14 +350,27 @@ def take_quota(pending: int, cap: int, remaining: int | None) -> int:
     return min(pending, cap, remaining)
 
 
+def _cap(v: int | None, default: int) -> int:
+    x = default if v is None else v
+    return max(0, int(x))
+
 def main():
     args = parse_args()
-    remaining = args.limit
 
-    reddit_cap = resolved_cap(args.reddit_limit, REDDIT_CRAWL_LIMIT)
-    linkedin_cap = resolved_cap(args.linkedin_limit, LINKEDIN_CRAWL_LIMIT)
-    x_cap = resolved_cap(args.x_limit, X_CRAWL_LIMIT)
-    generic_cap = resolved_cap(args.generic_limit, GENERIC_CRAWL_LIMIT)
+    reddit_cap = _cap(args.reddit_limit, REDDIT_CRAWL_LIMIT)
+    linkedin_cap = _cap(args.linkedin_limit, LINKEDIN_CRAWL_LIMIT)
+    x_cap = _cap(args.x_limit, X_CRAWL_LIMIT)
+    generic_cap = _cap(args.generic_limit, GENERIC_CRAWL_LIMIT)
+
+    explicit_source_plan = any(
+        v is not None
+        for v in (
+            args.reddit_limit,
+            args.linkedin_limit,
+            args.x_limit,
+            args.generic_limit,
+        )
+    )
 
     session = new_local_session()
     try:
@@ -372,28 +385,49 @@ def main():
         print("DONE all: no pending items left")
         return
 
-    reddit_take = take_quota(reddit_n, reddit_cap, remaining)
-    if reddit_take > 0:
-        run_script("app.reddit_crawl", reddit_take)
+    if explicit_source_plan:
+        reddit_take = min(reddit_n, reddit_cap)
+        linkedin_take = min(linkedin_n, linkedin_cap)
+        x_take = min(x_n, x_cap)
+        generic_take = min(generic_n, generic_cap)
+
+        print(
+            "SOURCE PLAN:",
+            {
+                "reddit": reddit_take,
+                "linkedin": linkedin_take,
+                "x": x_take,
+                "generic": generic_take,
+            },
+        )
+    else:
+        remaining = args.limit
+        reddit_take = take_quota(reddit_n, reddit_cap, remaining)
         if remaining is not None:
             remaining -= reddit_take
 
-    linkedin_take = take_quota(linkedin_n, linkedin_cap, remaining)
-    if linkedin_take > 0:
-        run_script("app.linkedin_crawl", linkedin_take)
+        linkedin_take = take_quota(linkedin_n, linkedin_cap, remaining)
         if remaining is not None:
             remaining -= linkedin_take
 
-    x_take = take_quota(x_n, x_cap, remaining)
-    if x_take > 0:
-        run_script("app.x_crawl", x_take)
+        x_take = take_quota(x_n, x_cap, remaining)
         if remaining is not None:
             remaining -= x_take
 
-    generic_take = take_quota(generic_n, generic_cap, remaining)
-    if generic_take > 0:
-        run_generic_queue(generic_take)
+        generic_take = take_quota(generic_n, generic_cap, remaining)
         if remaining is not None:
             remaining -= generic_take
+
+    if reddit_take > 0:
+        run_script("app.reddit_crawl", reddit_take)
+
+    if linkedin_take > 0:
+        run_script("app.linkedin_crawl", linkedin_take)
+
+    if x_take > 0:
+        run_script("app.x_crawl", x_take)
+
+    if generic_take > 0:
+        run_generic_queue(generic_take)
 
     print("DONE crawl_all: one capped pass finished")
