@@ -767,63 +767,6 @@ def get_embedding_model(model_name: str):
     from sentence_transformers import SentenceTransformer
     return SentenceTransformer(model_name)
 
-def rollback_graph_sqlite_from_backup(target_db: Path, backup_db: Path) -> None:
-    if backup_db.exists():
-        shutil.copy2(backup_db, target_db)
-    elif target_db.exists():
-        target_db.unlink()
-
-
-def rollback_graph_pg(pg_engine, schema: str, batch_id: str, source_ids: list[str], concept_ids: list[str], before: dict) -> None:
-    if pg_engine is None:
-        return
-
-    with pg_engine.begin() as conn:
-        conn.execute(text(f"DELETE FROM {schema}.source_payloads WHERE batch_id=:b"), {"b": batch_id})
-        conn.execute(text(f"DELETE FROM {schema}.source_concept_edges WHERE batch_id=:b"), {"b": batch_id})
-        conn.execute(text(f"DELETE FROM {schema}.concept_edges WHERE batch_id=:b"), {"b": batch_id})
-        conn.execute(text(f"DELETE FROM {schema}.source_edges WHERE batch_id=:b"), {"b": batch_id})
-
-        new_source_nodes = [x for x in source_ids if x not in before["source_nodes"]]
-        new_concept_nodes = [x for x in concept_ids if x not in before["concept_nodes"]]
-        new_source_emb = [x for x in source_ids if x not in before["source_embeddings"]]
-        new_concept_emb = [x for x in concept_ids if x not in before["concept_embeddings"]]
-        new_concept_stats = [x for x in concept_ids if x not in before["concept_stats"]]
-
-        if new_source_emb:
-            stmt = _expanding_text(
-                f"DELETE FROM {schema}.source_embeddings WHERE node_id IN :ids",
-                "ids",
-            )
-            conn.execute(stmt, {"ids": new_source_emb})
-
-        if new_concept_emb:
-            stmt = _expanding_text(
-                f"DELETE FROM {schema}.concept_embeddings WHERE node_id IN :ids",
-                "ids",
-            )
-            conn.execute(stmt, {"ids": new_concept_emb})
-
-        if new_concept_stats:
-            stmt = _expanding_text(
-                f"DELETE FROM {schema}.concept_stats WHERE concept_node_id IN :ids",
-                "ids",
-            )
-            conn.execute(stmt, {"ids": new_concept_stats})
-
-        if new_source_nodes:
-            stmt = _expanding_text(
-                f"DELETE FROM {schema}.source_nodes WHERE node_id IN :ids",
-                "ids",
-            )
-            conn.execute(stmt, {"ids": new_source_nodes})
-
-        if new_concept_nodes:
-            stmt = _expanding_text(
-                f"DELETE FROM {schema}.concept_nodes WHERE node_id IN :ids",
-                "ids",
-            )
-            conn.execute(stmt, {"ids": new_concept_nodes})
 
 def resolved_cap(cli_value: int | None, default_cap: int) -> int:
     return cli_value if cli_value is not None else default_cap
@@ -849,6 +792,62 @@ def write_run_ids_manifest(path: Path, ids: list[str]) -> None:
         json.dumps([str(x) for x in ids], ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def select_fallback_run_ids(
+    engine,
+    *,
+    reddit_limit: int,
+    linkedin_limit: int,
+    x_limit: int,
+    generic_limit: int,
+) -> list[str]:
+    table = "saved_items" if engine.dialect.name == "sqlite" else "app.saved_items"
+    llm_batched = "llm_batched" if engine.dialect.name == "sqlite" else "app.llm_batched"
+    llm_processed = "llm_processed" if engine.dialect.name == "sqlite" else "public.llm_processed"
+
+    out: list[str] = []
+
+    def fetch_ids(source_sql: str, limit_value: int) -> list[str]:
+        if limit_value <= 0:
+            return []
+        sql = f"""
+            SELECT s.id
+            FROM {table} s
+            WHERE s.status IN ('crawled', 'crawled_wayback', 'title_only')
+              AND ({source_sql})
+              AND NOT EXISTS (
+                    SELECT 1 FROM {llm_batched} b
+                    WHERE b.saved_item_id = s.id
+              )
+              AND NOT EXISTS (
+                    SELECT 1 FROM {llm_processed} p
+                    WHERE p.saved_item_id = s.id
+              )
+            ORDER BY
+              CASE
+                WHEN s.status = 'crawled' THEN 0
+                WHEN s.status = 'crawled_wayback' THEN 1
+                WHEN s.status = 'title_only' THEN 2
+                ELSE 99
+              END,
+              LENGTH(COALESCE(s.extracted_text, '')) DESC,
+              s.id
+            LIMIT :n
+        """
+        with engine.begin() as conn:
+            rows = conn.execute(text(sql), {"n": int(limit_value)}).fetchall()
+        return [str(r[0]) for r in rows]
+
+    out.extend(fetch_ids("s.url_source = 'reddit'", reddit_limit))
+    out.extend(fetch_ids("s.url_source = 'linkedin'", linkedin_limit))
+    out.extend(fetch_ids("s.url_source = 'x'", x_limit))
+    out.extend(fetch_ids(
+        "s.url_source IS NULL OR s.url_source IN ('generic', 'youtube', 'web')",
+        generic_limit,
+    ))
+
+    return out
 
 
 def main() -> None:
@@ -949,8 +948,24 @@ def main() -> None:
             sid for sid in touched_ids
             if crawl_after_local.get(sid, {}).get("status") in POST_CRAWL_STATUSES
         ]
+
         if not selected_run_ids:
-            raise RuntimeError("crawl_all completed but produced no post-crawl items for this run")
+            selected_run_ids = select_fallback_run_ids(
+                app_local_engine,
+                reddit_limit=pipeline_reddit_limit,
+                linkedin_limit=pipeline_linkedin_limit,
+                x_limit=pipeline_x_limit,
+                generic_limit=pipeline_generic_limit,
+            )
+            print(
+                "[run_pipeline] no crawl-touched post-crawl rows; "
+                f"fallback selected existing eligible rows count={len(selected_run_ids)}"
+            )
+
+        if not selected_run_ids:
+            raise RuntimeError(
+                "no eligible rows available for this run after crawl and fallback selection"
+            )
 
         write_run_ids_manifest(run_ids_file, selected_run_ids)
         print(f"[run_pipeline] selected_run_ids={len(selected_run_ids)} file={run_ids_file}")
