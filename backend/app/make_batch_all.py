@@ -374,7 +374,10 @@ def main():
                     ],
                 }
 
-                f.write(json.dumps(payload, ensure_ascii=False) + "")
+                line = json.dumps(payload, ensure_ascii=False)
+                f.write(line + ""
+                "")
+                
                 insert_llm_batched(session, it.id, url, str(out_path))
                 session.commit()
 
