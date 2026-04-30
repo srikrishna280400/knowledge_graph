@@ -6,6 +6,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker, declarative_base
+from sqlalchemy.pool import NullPool
 
 
 try:
@@ -130,7 +131,6 @@ def get_engine(
     echo: bool = False,
 ) -> Engine:
     cache_key = f"{target}|future={int(future)}|echo={int(echo)}"
-
     engine = _ENGINE_CACHE.get(cache_key)
     if engine is not None:
         return engine
@@ -140,13 +140,21 @@ def get_engine(
     if is_sqlite_url(database_url):
         db_path = get_db_path(target)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    engine = create_engine(
-        database_url,
-        future=future,
-        echo=echo,
-        pool_pre_ping=True,
-    )
+        engine = create_engine(
+            database_url,
+            future=future,
+            echo=echo,
+            pool_pre_ping=True,
+        )
+    else:
+        engine = create_engine(
+            database_url,
+            future=future,
+            echo=echo,
+            pool_pre_ping=True,
+            poolclass=NullPool,
+            connect_args={"prepare_threshold": None},
+        )
 
     _ENGINE_CACHE[cache_key] = engine
     return engine
