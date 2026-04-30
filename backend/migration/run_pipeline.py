@@ -49,7 +49,7 @@ LOCAL_ENV = load_local_env()
 
 RUN_LIMIT = 2
 
-PIPELINE_REDDIT_CRAWL_LIMIT = 4
+PIPELINE_REDDIT_CRAWL_LIMIT = 6
 PIPELINE_LINKEDIN_CRAWL_LIMIT = 0
 PIPELINE_X_CRAWL_LIMIT = 0
 PIPELINE_GENERIC_CRAWL_LIMIT = 0
@@ -843,6 +843,13 @@ def resolve_single_profile_id(engine) -> str:
         )
     return str(rows[0][0])
 
+def write_run_ids_manifest(path: Path, ids: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps([str(x) for x in ids], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
 
 def main() -> None:
     args = parse_args()
@@ -888,6 +895,7 @@ def main() -> None:
     groq_out = batch_out.with_name(f"{batch_out.stem}_outputs.jsonl")
     groq_incomplete_out = batch_out.with_name(f"{batch_out.stem}_outputs_incomplete.jsonl")
     groq_csv_out = batch_out.with_name(f"{batch_out.stem}_outputs.csv")
+    run_ids_file = batch_out.with_name(f"{batch_out.stem}_crawl_ids.json")
     normalized_out = batch_out.with_name(f"{batch_out.stem}_outputs.normalized.jsonl")
 
     pipeline_db_url = get_pipeline_db_url(args.pipeline_db_url)
@@ -927,14 +935,13 @@ def main() -> None:
         pipeline_x_limit = resolved_cap(args.x_limit, PIPELINE_X_CRAWL_LIMIT)
         pipeline_generic_limit = resolved_cap(args.generic_limit, PIPELINE_GENERIC_CRAWL_LIMIT)
 
-        crawl_cmd = [
+        run_cmd([
     sys.executable, "-m", "app.crawl_all",
     "--reddit-limit", str(pipeline_reddit_limit),
     "--linkedin-limit", str(pipeline_linkedin_limit),
     "--x-limit", str(pipeline_x_limit),
     "--generic-limit", str(pipeline_generic_limit),
-]
-        run_cmd(crawl_cmd)
+])
         
         app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
@@ -944,6 +951,17 @@ def main() -> None:
 )
         touched_ids = detect_crawl_touched_ids(crawl_before_local, crawl_after_local)
         
+        selected_run_ids = [
+    sid for sid in touched_ids
+    if crawl_after_local.get(sid, {}).get("status") in POST_CRAWL_STATUSES
+]
+        if not selected_run_ids:
+            raise RuntimeError("crawl_all completed but produced no post-crawl items for this run")
+        
+        write_run_ids_manifest(run_ids_file, selected_run_ids)
+        print(f"[run_pipeline] selected_run_ids={len(selected_run_ids)} file={run_ids_file}")
+        
+
         sync_saved_items_to_both(
     app_mirror_engine,
     app_local_engine,
@@ -971,8 +989,9 @@ def main() -> None:
         run_cmd([
             sys.executable, "-m", "app.make_batch_all",
             "--out", str(batch_out),
-            "--limit", str(pipeline_batch_limit),
-        ])
+            "--ids-file", str(run_ids_file),
+            ])
+        
         app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
         batch_rows = jsonl_rows(batch_out)
