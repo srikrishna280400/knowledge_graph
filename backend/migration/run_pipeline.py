@@ -262,6 +262,7 @@ def get_pipeline_engine(db_url: str):
         db_url,
         future=True,
         pool_pre_ping=True,
+        connect_args={"prepare_threshold": None},
     )
 
 
