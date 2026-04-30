@@ -49,10 +49,10 @@ LOCAL_ENV = load_local_env()
 
 RUN_LIMIT = 2
 
-PIPELINE_REDDIT_CRAWL_LIMIT = 4
+PIPELINE_REDDIT_CRAWL_LIMIT = 1
 PIPELINE_LINKEDIN_CRAWL_LIMIT = 0
 PIPELINE_X_CRAWL_LIMIT = 0
-PIPELINE_GENERIC_CRAWL_LIMIT = 0
+PIPELINE_GENERIC_CRAWL_LIMIT = 1
 
 RETRYABLE_STATUSES = ("pending_crawl", "crawl_failed", "extraction_failed")
 POST_CRAWL_STATUSES = ("crawled", "crawled_wayback", "title_only")
@@ -73,7 +73,168 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--generic-limit", type=int, default=None)
     return p.parse_args()
 
+def ensure_llm_batched_table_runner(engine) -> None:
+    table_ref = "llm_batched" if engine.dialect.name == "sqlite" else "app.llm_batched"
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {table_ref} (
+            saved_item_id TEXT PRIMARY KEY,
+            canonical_url TEXT,
+            batch_file TEXT,
+            batched_at {"TEXT" if engine.dialect.name == "sqlite" else "TIMESTAMPTZ"} DEFAULT CURRENT_TIMESTAMP
+        )
+        """))
 
+def ensure_llm_tables_runner(engine) -> None:
+    is_sqlite = engine.dialect.name == "sqlite"
+    outputs = "llm_outputs" if is_sqlite else "public.llm_outputs"
+    processed = "llm_processed" if is_sqlite else "public.llm_processed"
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {outputs} (
+            saved_item_id TEXT PRIMARY KEY,
+            canonical_url TEXT,
+            model TEXT,
+            content TEXT,
+            parsed_json TEXT,
+            raw_response_json TEXT,
+            http_status INTEGER,
+            attempts INTEGER,
+            content_mode TEXT,
+            created_at {"TEXT" if is_sqlite else "TIMESTAMPTZ"} DEFAULT CURRENT_TIMESTAMP
+        )
+        """))
+        conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {processed} (
+            saved_item_id TEXT PRIMARY KEY,
+            processed_at {"TEXT" if is_sqlite else "TIMESTAMPTZ"} DEFAULT CURRENT_TIMESTAMP
+        )
+        """))
+
+def upsert_saved_item_row(dst_engine, row: dict) -> None:
+    table = "saved_items" if dst_engine.dialect.name == "sqlite" else "app.saved_items"
+    cols = ["id", "canonical_url", "title", "extracted_text", "status", "summary"]
+    insert_cols = ", ".join(cols)
+    insert_vals = ", ".join(f":{c}" for c in cols)
+    if dst_engine.dialect.name == "sqlite":
+        update_set = ", ".join(f"{c}=excluded.{c}" for c in cols if c != "id")
+    else:
+        update_set = ", ".join(f"{c}=EXCLUDED.{c}" for c in cols if c != "id")
+    with dst_engine.begin() as conn:
+        conn.execute(text(f"""
+        INSERT INTO {table} ({insert_cols})
+        VALUES ({insert_vals})
+        ON CONFLICT (id) DO UPDATE SET
+        {update_set}
+        """), {c: row.get(c) for c in cols})
+
+def upsert_llm_batched_row(dst_engine, saved_item_id: str, canonical_url: str, batch_file: str) -> None:
+    table = "llm_batched" if dst_engine.dialect.name == "sqlite" else "app.llm_batched"
+    with dst_engine.begin() as conn:
+        conn.execute(text(f"""
+        INSERT INTO {table} (saved_item_id, canonical_url, batch_file)
+        VALUES (:sid, :url, :bf)
+        ON CONFLICT (saved_item_id) DO UPDATE SET
+        canonical_url = EXCLUDED.canonical_url,
+        batch_file = EXCLUDED.batch_file
+        """), {"sid": saved_item_id, "url": canonical_url, "bf": batch_file})
+
+def save_groq_result_runner(dst_engine, result: dict) -> None:
+    if not result.get("id"):
+        return
+    is_sqlite = dst_engine.dialect.name == "sqlite"
+    outputs = "llm_outputs" if is_sqlite else "public.llm_outputs"
+    processed = "llm_processed" if is_sqlite else "public.llm_processed"
+    now_sql = "datetime('now')" if is_sqlite else "CURRENT_TIMESTAMP"
+    parsed_json = json.dumps(result.get("parsed"), ensure_ascii=False) if result.get("parsed") is not None else None
+    raw_json = (
+        json.dumps(result.get("raw"), ensure_ascii=False)
+        if isinstance(result.get("raw"), dict)
+        else (result.get("raw") or "")
+    )
+    with dst_engine.begin() as conn:
+        if is_sqlite:
+            conn.execute(text(f"""
+            INSERT OR REPLACE INTO {outputs}
+            (saved_item_id, canonical_url, model, content, parsed_json, raw_response_json, http_status, attempts, content_mode, created_at)
+            VALUES (:id, :url, :model, :content, :parsed, :raw, :http_status, :attempts, :content_mode, {now_sql})
+            """), {
+                "id": result.get("id"),
+                "url": result.get("canonical_url"),
+                "model": result.get("model"),
+                "content": result.get("assistant_content"),
+                "parsed": parsed_json,
+                "raw": raw_json,
+                "http_status": result.get("http_status"),
+                "attempts": result.get("attempts"),
+                "content_mode": result.get("content_mode"),
+            })
+        else:
+            conn.execute(text(f"""
+            INSERT INTO {outputs}
+            (saved_item_id, canonical_url, model, content, parsed_json, raw_response_json, http_status, attempts, content_mode, created_at)
+            VALUES (:id, :url, :model, :content, :parsed, :raw, :http_status, :attempts, :content_mode, {now_sql})
+            ON CONFLICT (saved_item_id) DO UPDATE SET
+            canonical_url = EXCLUDED.canonical_url,
+            model = EXCLUDED.model,
+            content = EXCLUDED.content,
+            parsed_json = EXCLUDED.parsed_json,
+            raw_response_json = EXCLUDED.raw_response_json,
+            http_status = EXCLUDED.http_status,
+            attempts = EXCLUDED.attempts,
+            content_mode = EXCLUDED.content_mode,
+            created_at = EXCLUDED.created_at
+            """), {
+                "id": result.get("id"),
+                "url": result.get("canonical_url"),
+                "model": result.get("model"),
+                "content": result.get("assistant_content"),
+                "parsed": parsed_json,
+                "raw": raw_json,
+                "http_status": result.get("http_status"),
+                "attempts": result.get("attempts"),
+                "content_mode": result.get("content_mode"),
+            })
+
+        if result.get("http_status") and int(result["http_status"]) < 400 and result.get("parsed") is not None:
+            if is_sqlite:
+                conn.execute(text(f"""
+                INSERT OR REPLACE INTO {processed} (saved_item_id, processed_at)
+                VALUES (:id, {now_sql})
+                """), {"id": result["id"]})
+            else:
+                conn.execute(text(f"""
+                INSERT INTO {processed} (saved_item_id, processed_at)
+                VALUES (:id, {now_sql})
+                ON CONFLICT (saved_item_id) DO UPDATE SET
+                processed_at = EXCLUDED.processed_at
+                """), {"id": result["id"]})
+
+def sync_saved_items_to_both(pg_engine, kg_engine, rows_by_id: dict[str, dict], ids: list[str]) -> None:
+    for sid in ids:
+        row = rows_by_id.get(sid)
+        if row:
+            upsert_saved_item_row(pg_engine, row)
+            upsert_saved_item_row(kg_engine, row)
+
+def sync_llm_batched_to_both(pg_engine, kg_engine, rows: list[dict], batch_file: str) -> None:
+    ensure_llm_batched_table_runner(pg_engine)
+    ensure_llm_batched_table_runner(kg_engine)
+    for r in rows:
+        sid = str(r.get("id") or "")
+        if not sid:
+            continue
+        upsert_llm_batched_row(pg_engine, sid, (r.get("canonical_url") or "").strip(), batch_file)
+        upsert_llm_batched_row(kg_engine, sid, (r.get("canonical_url") or "").strip(), batch_file)
+
+def sync_groq_results_to_both(pg_engine, kg_engine, results: list[dict]) -> None:
+    ensure_llm_tables_runner(pg_engine)
+    ensure_llm_tables_runner(kg_engine)
+    for r in results:
+        save_groq_result_runner(pg_engine, r)
+        save_groq_result_runner(kg_engine, r)
+
+        
 def resolve_path(value: str, base_dir: Path) -> Path:
     p = Path(value).expanduser()
     if not p.is_absolute():
@@ -776,23 +937,29 @@ def main() -> None:
         app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
         crawl_after_local = fetch_saved_items_by_ids(
-            app_local_engine,
-            list(crawl_before_local.keys()),
-        )
+    app_local_engine,
+    list(crawl_before_local.keys()),
+)
         touched_ids = detect_crawl_touched_ids(crawl_before_local, crawl_after_local)
-
+        
+        sync_saved_items_to_both(
+    app_mirror_engine,
+    app_local_engine,
+    crawl_after_local,
+    touched_ids,
+)
         crawl_after_mirror = fetch_saved_items_by_ids(app_mirror_engine, touched_ids)
         bad = [
             sid for sid in touched_ids
             if crawl_after_mirror.get(sid, {}).get("status") not in POST_CRAWL_STATUSES
-        ]
-
+            ]
+        
         if bad:
             restore_saved_items(app_local_engine, crawl_before_local, touched_ids)
             restore_saved_items(app_mirror_engine, crawl_before_mirror, touched_ids)
             raise RuntimeError(
                 f"crawl verification failed in mirror; reverted {len(touched_ids)} rows"
-            )
+                )
 
         mark_step_done(engine, run_id, current_step)
 
@@ -806,26 +973,38 @@ def main() -> None:
         ])
         app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
-        batch_ids = jsonl_ids(batch_out)
+        batch_rows = jsonl_rows(batch_out)
+        batch_ids = [str(r["id"]) for r in batch_rows if r.get("id")]
         if not batch_ids:
             raise RuntimeError("make_batch_all produced no batch ids")
-
+        
+        sync_llm_batched_to_both(
+            app_mirror_engine,
+            app_local_engine,
+            batch_rows,
+            str(batch_out),
+            )
+        
         mirror_batched = fetch_llm_batched_ids(app_mirror_engine, str(batch_out))
-
+        local_batched = fetch_llm_batched_ids(app_local_engine, str(batch_out))
+        
         try:
             if set(batch_ids) - mirror_batched:
-                raise RuntimeError("missing mirror llm_batched rows after make_batch_all")
-
+                raise RuntimeError("missing Supabase llm_batched rows after make_batch_all")
+            if set(batch_ids) - local_batched:
+                raise RuntimeError("missing kg.sqlite llm_batched rows after make_batch_all")
+            
             batch_storage_key = persist_intermediate_artifact(
-                engine=engine,
-                run_id=run_id,
-                profile_id=profile_id,
-                step_name=current_step,
-                artifact_kind="batch_jsonl",
-                path=batch_out,
-                bucket=args.storage_bucket,
-                storage_prefix=args.storage_prefix,
-            )
+        engine=engine,
+        run_id=run_id,
+        profile_id=profile_id,
+        step_name=current_step,
+        artifact_kind="batch_jsonl",
+        path=batch_out,
+        bucket=args.storage_bucket,
+        storage_prefix=args.storage_prefix,
+    )
+            
         except Exception:
             delete_llm_batched_ids(app_local_engine, batch_ids)
             delete_llm_batched_ids(app_mirror_engine, batch_ids)
@@ -850,28 +1029,45 @@ def main() -> None:
         ])
         app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
-        groq_ids = jsonl_ids(groq_out)
-        groq_good_ids = groq_success_ids(groq_out)
-
+        groq_results = jsonl_rows(groq_out)
+        groq_ids = [str(r.get("id")) for r in groq_results if r.get("id")]
+        groq_good_ids = [
+            str(r.get("id"))
+            for r in groq_results
+            if r.get("id") and r.get("http_status") and int(r["http_status"]) < 400 and r.get("parsed") is not None
+        ]
+        
+        sync_groq_results_to_both(
+    app_mirror_engine,
+    app_local_engine,
+    groq_results,
+)
         try:
             mirror_outputs = fetch_llm_output_ids(app_mirror_engine, groq_ids)
             mirror_processed = fetch_llm_processed_ids(app_mirror_engine, groq_good_ids)
-
+            local_outputs = fetch_llm_output_ids(app_local_engine, groq_ids)
+            local_processed = fetch_llm_processed_ids(app_local_engine, groq_good_ids)
+            
             if set(groq_ids) - mirror_outputs:
-                raise RuntimeError("missing mirror llm_outputs rows after run_groq_all")
+                raise RuntimeError("missing Supabase llm_outputs rows after run_groq_all")
             if set(groq_good_ids) - mirror_processed:
-                raise RuntimeError("missing mirror llm_processed rows after run_groq_all")
-
+                raise RuntimeError("missing Supabase llm_processed rows after run_groq_all")
+            if set(groq_ids) - local_outputs:
+                raise RuntimeError("missing kg.sqlite llm_outputs rows after run_groq_all")
+            if set(groq_good_ids) - local_processed:
+                raise RuntimeError("missing kg.sqlite llm_processed rows after run_groq_all")
+            
             groq_storage_key = persist_intermediate_artifact(
-                engine=engine,
-                run_id=run_id,
-                profile_id=profile_id,
-                step_name=current_step,
-                artifact_kind="groq_output_jsonl",
-                path=groq_out,
-                bucket=args.storage_bucket,
-                storage_prefix=args.storage_prefix,
-            )
+        engine=engine,
+        run_id=run_id,
+        profile_id=profile_id,
+        step_name=current_step,
+        artifact_kind="groq_output_jsonl",
+        path=groq_out,
+        bucket=args.storage_bucket,
+        storage_prefix=args.storage_prefix,
+    )
+            
         except Exception:
             delete_llm_output_ids(app_local_engine, groq_ids)
             delete_llm_output_ids(app_mirror_engine, groq_ids)
@@ -938,40 +1134,51 @@ def main() -> None:
             graph_pg_schema,
             source_ids,
             concept_ids,
-        )
-
-        run_cmd([
-            sys.executable, "-m", "app.graph_ingest_incremental",
-            "--in", str(normalized_out),
-            "--db", str(graph_db_target),
-        ])
-
+            )
+        
         try:
+            run_cmd([
+        sys.executable, "-m", "app.graph_ingest_incremental",
+        "--in", str(normalized_out),
+        "--db", str(graph_db_target),
+    ])
+            sqlite_counts = fetch_graph_batch_counts_sqlite(
+        graph_db_target,
+        batch_id,
+    )
+            sqlite_presence = fetch_graph_presence_sqlite(
+        graph_db_target,
+        source_ids,
+        concept_ids,
+    )
             pg_counts = fetch_graph_batch_counts_pg(
-                graph_pg_engine,
-                graph_pg_schema,
-                batch_id,
-            )
+        graph_pg_engine,
+        graph_pg_schema,
+        batch_id,
+    )
             pg_presence = fetch_graph_presence_pg(
-                graph_pg_engine,
-                graph_pg_schema,
-                source_ids,
-                concept_ids,
-            )
-
-            if pg_counts["source_payloads"] < len(source_ids):
-                raise RuntimeError(
-                    "mirror graph ingest verification failed: source_payloads shortfall"
-                )
-            if set(source_ids) - pg_presence["source_nodes"]:
-                raise RuntimeError(
-                    "mirror graph ingest verification failed: missing source_nodes"
-                )
-            if concept_ids and (set(concept_ids) - pg_presence["concept_nodes"]):
-                raise RuntimeError(
-                    "mirror graph ingest verification failed: missing concept_nodes"
-                )
-
+        graph_pg_engine,
+        graph_pg_schema,
+        source_ids,
+        concept_ids,
+    )
+            if sqlite_counts["source_payloads"] < len(source_ids):
+                raise RuntimeError("sqlite graph ingest verification failed: source_payloads shortfall")
+            if set(source_ids) - sqlite_presence["source_nodes"]:
+                raise RuntimeError("sqlite graph ingest verification failed: missing source_nodes")
+            if concept_ids and (set(concept_ids) - sqlite_presence["concept_nodes"]):
+                raise RuntimeError("sqlite graph ingest verification failed: missing concept_nodes")
+            
+            for key in ("source_payloads", "source_concept_edges", "concept_edges", "source_edges"):
+                if pg_counts[key] != sqlite_counts[key]:
+                    raise RuntimeError(
+                        f"graph mirror mismatch for {key}: sqlite={sqlite_counts[key]} pg={pg_counts[key]}"
+                    )
+                
+            for key in ("source_nodes", "concept_nodes", "source_embeddings", "concept_embeddings", "concept_stats"):
+                if pg_presence[key] != sqlite_presence[key]:
+                    raise RuntimeError(f"graph mirror mismatch for {key}")
+            
         except Exception:
             rollback_graph_sqlite_from_backup(graph_db_target, graph_backup)
             rollback_graph_pg(
@@ -981,8 +1188,9 @@ def main() -> None:
                 source_ids,
                 concept_ids,
                 graph_before_pg,
-            )
+                )
             raise
+        
         finally:
             if graph_backup.exists():
                 graph_backup.unlink()
