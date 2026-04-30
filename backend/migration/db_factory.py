@@ -1,3 +1,5 @@
+#db_factory.py
+
 from __future__ import annotations
 import os
 import re
@@ -49,7 +51,9 @@ def get_primary_mirror_engine(
         future=future,
         echo=echo,
         pool_pre_ping=True,
-    )
+        poolclass=NullPool,
+        connect_args={"prepare_threshold": None},
+        )
     _ENGINE_CACHE[cache_key] = engine
     return engine
 
