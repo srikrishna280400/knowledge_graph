@@ -932,26 +932,27 @@ def main() -> None:
 
         try:
             mirror_counts = mirror_batch_to_postgres(
-                con=con,
-                batch_id=batch_id,
-                model_name=args.model_name,
-                source_ids=source_ids,
-                concept_ids=concept_ids,
-            )
+        con=con,
+        batch_id=batch_id,
+        model_name=args.model_name,
+        source_ids=source_ids,
+        concept_ids=concept_ids,
+    )
             print(
-                "OK mirrored batch to Postgres:",
-                f"source_nodes={mirror_counts['source_nodes']},",
-                f"concept_nodes={mirror_counts['concept_nodes']},",
-                f"source_payloads={mirror_counts['source_payloads']},",
-                f"source_concept_edges={mirror_counts['source_concept_edges']},",
-                f"concept_edges={mirror_counts['concept_edges']},",
-                f"source_edges={mirror_counts['source_edges']},",
-                f"source_embeddings={mirror_counts['source_embeddings']},",
-                f"concept_embeddings={mirror_counts['concept_embeddings']},",
-                f"concept_stats={mirror_counts['concept_stats']}",
-            )
+        "OK mirrored batch to Postgres:",
+        f"source_nodes={mirror_counts['source_nodes']},",
+        f"concept_nodes={mirror_counts['concept_nodes']},",
+        f"source_payloads={mirror_counts['source_payloads']},",
+        f"source_concept_edges={mirror_counts['source_concept_edges']},",
+        f"concept_edges={mirror_counts['concept_edges']},",
+        f"source_edges={mirror_counts['source_edges']},",
+        f"source_embeddings={mirror_counts['source_embeddings']},",
+        f"concept_embeddings={mirror_counts['concept_embeddings']},",
+        f"concept_stats={mirror_counts['concept_stats']}",
+    )
         except Exception as e:
-            print(f"⚠ mirror graph sync failed; local graph_store sqlite write kept: {e}")
+            print(f"graph mirror sync failed; aborting batch: {e}")
+            raise
 
         print(f"OK batch ingested: {batch_id}")
         print(f"Source nodes: {len(batch_objs)}, Concept nodes: {len(all_concept_nodes)}")
