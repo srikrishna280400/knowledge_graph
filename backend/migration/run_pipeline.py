@@ -853,26 +853,26 @@ def write_run_ids_manifest(path: Path, ids: list[str]) -> None:
 
 def main() -> None:
     args = parse_args()
-    
+
     pipeline_reddit_limit = resolved_cap(args.reddit_limit, PIPELINE_REDDIT_CRAWL_LIMIT)
     pipeline_linkedin_limit = resolved_cap(args.linkedin_limit, PIPELINE_LINKEDIN_CRAWL_LIMIT)
     pipeline_x_limit = resolved_cap(args.x_limit, PIPELINE_X_CRAWL_LIMIT)
     pipeline_generic_limit = resolved_cap(args.generic_limit, PIPELINE_GENERIC_CRAWL_LIMIT)
-    
+
     pipeline_batch_limit = (
         pipeline_reddit_limit
         + pipeline_linkedin_limit
         + pipeline_x_limit
         + pipeline_generic_limit
-        )
-    
+    )
+
     if pipeline_batch_limit <= 0:
         raise ValueError("pipeline_batch_limit must be > 0")
 
     run_limit = args.run_limit
     if run_limit <= 0:
         raise ValueError("--run-limit must be > 0")
-    
+
     project_root = Path(__file__).resolve().parents[1]
 
     profile_id = args.profile_id.strip() or resolve_single_profile_id(get_primary_sqlite_engine())
@@ -928,58 +928,49 @@ def main() -> None:
         mark_step_start(engine, run_id, profile_id, current_step)
 
         crawl_before_local = fetch_saved_items_snapshot(app_local_engine)
-        crawl_before_mirror = fetch_saved_items_snapshot(app_mirror_engine)
-
-        pipeline_reddit_limit = resolved_cap(args.reddit_limit, PIPELINE_REDDIT_CRAWL_LIMIT)
-        pipeline_linkedin_limit = resolved_cap(args.linkedin_limit, PIPELINE_LINKEDIN_CRAWL_LIMIT)
-        pipeline_x_limit = resolved_cap(args.x_limit, PIPELINE_X_CRAWL_LIMIT)
-        pipeline_generic_limit = resolved_cap(args.generic_limit, PIPELINE_GENERIC_CRAWL_LIMIT)
 
         run_cmd([
-    sys.executable, "-m", "app.crawl_all",
-    "--reddit-limit", str(pipeline_reddit_limit),
-    "--linkedin-limit", str(pipeline_linkedin_limit),
-    "--x-limit", str(pipeline_x_limit),
-    "--generic-limit", str(pipeline_generic_limit),
-])
-        
+            sys.executable, "-m", "app.crawl_all",
+            "--reddit-limit", str(pipeline_reddit_limit),
+            "--linkedin-limit", str(pipeline_linkedin_limit),
+            "--x-limit", str(pipeline_x_limit),
+            "--generic-limit", str(pipeline_generic_limit),
+        ])
+
         app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
         crawl_after_local = fetch_saved_items_by_ids(
-    app_local_engine,
-    list(crawl_before_local.keys()),
-)
+            app_local_engine,
+            list(crawl_before_local.keys()),
+        )
         touched_ids = detect_crawl_touched_ids(crawl_before_local, crawl_after_local)
-        
+
         selected_run_ids = [
-    sid for sid in touched_ids
-    if crawl_after_local.get(sid, {}).get("status") in POST_CRAWL_STATUSES
-]
+            sid for sid in touched_ids
+            if crawl_after_local.get(sid, {}).get("status") in POST_CRAWL_STATUSES
+        ]
         if not selected_run_ids:
             raise RuntimeError("crawl_all completed but produced no post-crawl items for this run")
-        
+
         write_run_ids_manifest(run_ids_file, selected_run_ids)
         print(f"[run_pipeline] selected_run_ids={len(selected_run_ids)} file={run_ids_file}")
-        
 
         sync_saved_items_to_both(
-    app_mirror_engine,
-    app_local_engine,
-    crawl_after_local,
-    touched_ids,
-)
+            app_mirror_engine,
+            app_local_engine,
+            crawl_after_local,
+            touched_ids,
+        )
+
         crawl_after_mirror = fetch_saved_items_by_ids(app_mirror_engine, touched_ids)
         bad = [
             sid for sid in touched_ids
             if crawl_after_mirror.get(sid, {}).get("status") not in POST_CRAWL_STATUSES
-            ]
-        
+        ]
         if bad:
-            restore_saved_items(app_local_engine, crawl_before_local, touched_ids)
-            restore_saved_items(app_mirror_engine, crawl_before_mirror, touched_ids)
             raise RuntimeError(
-                f"crawl verification failed in mirror; reverted {len(touched_ids)} rows"
-                )
+                f"crawl verification failed in mirror; no rollback performed; bad_rows={len(bad)}"
+            )
 
         mark_step_done(engine, run_id, current_step)
 
@@ -990,47 +981,40 @@ def main() -> None:
             sys.executable, "-m", "app.make_batch_all",
             "--out", str(batch_out),
             "--ids-file", str(run_ids_file),
-            ])
-        
+        ])
+
         app_local_engine = refresh_primary_sqlite_engine(app_local_engine)
 
         batch_rows = jsonl_rows(batch_out)
         batch_ids = [str(r["id"]) for r in batch_rows if r.get("id")]
         if not batch_ids:
             raise RuntimeError("make_batch_all produced no batch ids")
-        
+
         sync_llm_batched_to_both(
             app_mirror_engine,
             app_local_engine,
             batch_rows,
             str(batch_out),
-            )
-        
+        )
+
         mirror_batched = fetch_llm_batched_ids(app_mirror_engine, str(batch_out))
         local_batched = fetch_llm_batched_ids(app_local_engine, str(batch_out))
-        
-        try:
-            if set(batch_ids) - mirror_batched:
-                raise RuntimeError("missing Supabase llm_batched rows after make_batch_all")
-            if set(batch_ids) - local_batched:
-                raise RuntimeError("missing kg.sqlite llm_batched rows after make_batch_all")
-            
-            batch_storage_key = persist_intermediate_artifact(
-        engine=engine,
-        run_id=run_id,
-        profile_id=profile_id,
-        step_name=current_step,
-        artifact_kind="batch_jsonl",
-        path=batch_out,
-        bucket=args.storage_bucket,
-        storage_prefix=args.storage_prefix,
-    )
-            
-        except Exception:
-            delete_llm_batched_ids(app_local_engine, batch_ids)
-            delete_llm_batched_ids(app_mirror_engine, batch_ids)
-            delete_file_if_exists(batch_out)
-            raise
+
+        if set(batch_ids) - mirror_batched:
+            raise RuntimeError("missing Supabase llm_batched rows after make_batch_all")
+        if set(batch_ids) - local_batched:
+            raise RuntimeError("missing kg.sqlite llm_batched rows after make_batch_all")
+
+        batch_storage_key = persist_intermediate_artifact(
+            engine=engine,
+            run_id=run_id,
+            profile_id=profile_id,
+            step_name=current_step,
+            artifact_kind="batch_jsonl",
+            path=batch_out,
+            bucket=args.storage_bucket,
+            storage_prefix=args.storage_prefix,
+        )
 
         mark_step_done(
             engine,
@@ -1055,47 +1039,42 @@ def main() -> None:
         groq_good_ids = [
             str(r.get("id"))
             for r in groq_results
-            if r.get("id") and r.get("http_status") and int(r["http_status"]) < 400 and r.get("parsed") is not None
+            if r.get("id")
+            and r.get("http_status")
+            and int(r["http_status"]) < 400
+            and r.get("parsed") is not None
         ]
-        
+
         sync_groq_results_to_both(
-    app_mirror_engine,
-    app_local_engine,
-    groq_results,
-)
-        try:
-            mirror_outputs = fetch_llm_output_ids(app_mirror_engine, groq_ids)
-            mirror_processed = fetch_llm_processed_ids(app_mirror_engine, groq_good_ids)
-            local_outputs = fetch_llm_output_ids(app_local_engine, groq_ids)
-            local_processed = fetch_llm_processed_ids(app_local_engine, groq_good_ids)
-            
-            if set(groq_ids) - mirror_outputs:
-                raise RuntimeError("missing Supabase llm_outputs rows after run_groq_all")
-            if set(groq_good_ids) - mirror_processed:
-                raise RuntimeError("missing Supabase llm_processed rows after run_groq_all")
-            if set(groq_ids) - local_outputs:
-                raise RuntimeError("missing kg.sqlite llm_outputs rows after run_groq_all")
-            if set(groq_good_ids) - local_processed:
-                raise RuntimeError("missing kg.sqlite llm_processed rows after run_groq_all")
-            
-            groq_storage_key = persist_intermediate_artifact(
-        engine=engine,
-        run_id=run_id,
-        profile_id=profile_id,
-        step_name=current_step,
-        artifact_kind="groq_output_jsonl",
-        path=groq_out,
-        bucket=args.storage_bucket,
-        storage_prefix=args.storage_prefix,
-    )
-            
-        except Exception:
-            delete_llm_output_ids(app_local_engine, groq_ids)
-            delete_llm_output_ids(app_mirror_engine, groq_ids)
-            delete_file_if_exists(groq_out)
-            delete_file_if_exists(groq_incomplete_out)
-            delete_file_if_exists(groq_csv_out)
-            raise
+            app_mirror_engine,
+            app_local_engine,
+            groq_results,
+        )
+
+        mirror_outputs = fetch_llm_output_ids(app_mirror_engine, groq_ids)
+        mirror_processed = fetch_llm_processed_ids(app_mirror_engine, groq_good_ids)
+        local_outputs = fetch_llm_output_ids(app_local_engine, groq_ids)
+        local_processed = fetch_llm_processed_ids(app_local_engine, groq_good_ids)
+
+        if set(groq_ids) - mirror_outputs:
+            raise RuntimeError("missing Supabase llm_outputs rows after run_groq_all")
+        if set(groq_good_ids) - mirror_processed:
+            raise RuntimeError("missing Supabase llm_processed rows after run_groq_all")
+        if set(groq_ids) - local_outputs:
+            raise RuntimeError("missing kg.sqlite llm_outputs rows after run_groq_all")
+        if set(groq_good_ids) - local_processed:
+            raise RuntimeError("missing kg.sqlite llm_processed rows after run_groq_all")
+
+        groq_storage_key = persist_intermediate_artifact(
+            engine=engine,
+            run_id=run_id,
+            profile_id=profile_id,
+            step_name=current_step,
+            artifact_kind="groq_output_jsonl",
+            path=groq_out,
+            bucket=args.storage_bucket,
+            storage_prefix=args.storage_prefix,
+        )
 
         mark_step_done(
             engine,
@@ -1146,75 +1125,30 @@ def main() -> None:
         source_ids = manifest["source_ids"]
         concept_ids = manifest["concept_ids"]
 
-        graph_backup = graph_db_target.with_suffix(graph_db_target.suffix + ".bak")
-        if graph_db_target.exists():
-            shutil.copy2(graph_db_target, graph_backup)
-
-        graph_before_pg = fetch_graph_presence_pg(
-            graph_pg_engine,
-            graph_pg_schema,
-            source_ids,
-            concept_ids,
-            )
+        run_cmd([
+    sys.executable, "-m", "app.graph_ingest_incremental",
+    "--in", str(normalized_out),
+    "--db", str(graph_db_target),
+])
+        sqlite_counts = fetch_graph_batch_counts_sqlite(graph_db_target, batch_id)
+        sqlite_presence = fetch_graph_presence_sqlite(graph_db_target, source_ids, concept_ids)
+        pg_counts = fetch_graph_batch_counts_pg(graph_pg_engine, graph_pg_schema, batch_id)
+        pg_presence = fetch_graph_presence_pg(graph_pg_engine, graph_pg_schema, source_ids, concept_ids)
         
-        try:
-            run_cmd([
-        sys.executable, "-m", "app.graph_ingest_incremental",
-        "--in", str(normalized_out),
-        "--db", str(graph_db_target),
-    ])
-            sqlite_counts = fetch_graph_batch_counts_sqlite(
-        graph_db_target,
-        batch_id,
-    )
-            sqlite_presence = fetch_graph_presence_sqlite(
-        graph_db_target,
-        source_ids,
-        concept_ids,
-    )
-            pg_counts = fetch_graph_batch_counts_pg(
-        graph_pg_engine,
-        graph_pg_schema,
-        batch_id,
-    )
-            pg_presence = fetch_graph_presence_pg(
-        graph_pg_engine,
-        graph_pg_schema,
-        source_ids,
-        concept_ids,
-    )
-            if sqlite_counts["source_payloads"] < len(source_ids):
-                raise RuntimeError("sqlite graph ingest verification failed: source_payloads shortfall")
-            if set(source_ids) - sqlite_presence["source_nodes"]:
-                raise RuntimeError("sqlite graph ingest verification failed: missing source_nodes")
-            if concept_ids and (set(concept_ids) - sqlite_presence["concept_nodes"]):
-                raise RuntimeError("sqlite graph ingest verification failed: missing concept_nodes")
-            
-            for key in ("source_payloads", "source_concept_edges", "concept_edges", "source_edges"):
-                if pg_counts[key] != sqlite_counts[key]:
-                    raise RuntimeError(
-                        f"graph mirror mismatch for {key}: sqlite={sqlite_counts[key]} pg={pg_counts[key]}"
-                    )
-                
-            for key in ("source_nodes", "concept_nodes", "source_embeddings", "concept_embeddings", "concept_stats"):
-                if pg_presence[key] != sqlite_presence[key]:
-                    raise RuntimeError(f"graph mirror mismatch for {key}")
-            
-        except Exception:
-            rollback_graph_sqlite_from_backup(graph_db_target, graph_backup)
-            rollback_graph_pg(
-                graph_pg_engine,
-                graph_pg_schema,
-                batch_id,
-                source_ids,
-                concept_ids,
-                graph_before_pg,
-                )
-            raise
+        if sqlite_counts["source_payloads"] < len(source_ids):
+            raise RuntimeError("sqlite graph ingest verification failed: source_payloads shortfall")
+        if set(source_ids) - sqlite_presence["source_nodes"]:
+            raise RuntimeError("sqlite graph ingest verification failed: missing source_nodes")
+        if concept_ids and (set(concept_ids) - sqlite_presence["concept_nodes"]):
+            raise RuntimeError("sqlite graph ingest verification failed: missing concept_nodes")
         
-        finally:
-            if graph_backup.exists():
-                graph_backup.unlink()
+        for key in ("source_payloads", "source_concept_edges", "concept_edges", "source_edges"):
+            if pg_counts[key] != sqlite_counts[key]:
+                raise RuntimeError(f"graph mirror mismatch for {key}: sqlite={sqlite_counts[key]} pg={pg_counts[key]}")
+            
+        for key in ("source_nodes", "concept_nodes", "source_embeddings", "concept_embeddings", "concept_stats"):
+            if pg_presence[key] != sqlite_presence[key]:
+                raise RuntimeError(f"graph mirror mismatch for {key}")
 
         mark_step_done(
             engine,
