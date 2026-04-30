@@ -1,3 +1,5 @@
+#make_batch_all.py
+
 import argparse
 import json
 from pathlib import Path
@@ -117,6 +119,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--out", dest="out_path", help="Path to batch JSONL to create")
     p.add_argument("--limit", type=int, help="Max URLs to batch for this run")
+    p.add_argument("--ids-file", default="", help="JSON array of SavedItem IDs chosen by run_pipeline")
     return p.parse_args()
 
 
@@ -137,6 +140,16 @@ STATUS_PRIORITY = case(
     (SavedItem.status == "title_only", 2),
     else_=99,
 )
+
+def load_ids_file(path_value: str) -> list[str]:
+    path_value = (path_value or "").strip()
+    if not path_value:
+        return []
+    p = Path(path_value)
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("--ids-file must contain a JSON array of IDs")
+    return [str(x).strip() for x in data if str(x).strip()]
 
 
 def build_user_content(it: SavedItem) -> str:
@@ -226,139 +239,115 @@ def sqlite_table_exists(session, table_name: str, schema: str = "main") -> bool:
     ).first()
     return row is not None
 
+
 def main():
     args = parse_args()
-    effective_limit = args.limit if args.limit is not None else TEMP_TOP_N
-    if effective_limit <= 0:
-        raise ValueError("--limit must be > 0")
-    
-    enforce_budget = args.limit is None
+    selected_ids = load_ids_file(args.ids_file)
 
     out_path = Path(args.out_path) if args.out_path else DEFAULT_OUT_PATH
     if not out_path.is_absolute():
         out_path = Path(__file__).resolve().parents[1] / out_path
-
-    local_engine = create_engine(
-        build_sqlite_url(get_db_path(PRIMARY)),
-        future=True,
-        pool_pre_ping=True,
-    )
-    session = Session(
-        bind=local_engine,
-        autoflush=False,
-        autocommit=False,
-        future=True,
-        )
-
-    mirror_engine = get_primary_mirror_engine()
-    mirror_session = None
-    if mirror_engine is not None:
-        mirror_session = Session(
-            bind=mirror_engine,
-            autoflush=False,
-            autocommit=False,
-            future=True,
-            )
-        print(f"[mirror] connected via {mirror_engine.dialect.name}")
+        
+        local_engine = create_engine(build_sqlite_url(get_db_path(PRIMARY)), future=True, pool_pre_ping=True)
+        session = Session(bind=local_engine, autoflush=False, autocommit=False, future=True)
+        
+        mirror_engine = get_primary_mirror_engine()
+        mirror_session = None
+        if mirror_engine is not None:
+            mirror_session = Session(bind=mirror_engine, autoflush=False, autocommit=False, future=True)
+            print(f"[mirror] connected via {mirror_engine.dialect.name}")
+            
         try:
-            ensure_llm_batched_table(mirror_session)
-            mirror_session.commit()
-        except Exception as e:
-            mirror_session.rollback()
-            print(f"⚠ mirror llm_batched ensure failed; local sqlite write kept: {e}")
-    else:
-        print("ⓘ mirror disabled: no primary mirror DB configured")
-
-    try:
-        llm_processed_exists = sqlite_table_exists(session, "llm_processed")
-
-        if not llm_processed_exists:
-            print("ⓘ llm_processed table missing -> skipping processed-items exclusion")
-
-        stmt = (
-            select(SavedItem)
-            .where(SavedItem.status.in_(["crawled", "crawled_wayback"]))
-        )
-
-        if llm_processed_exists:
-            stmt = stmt.where(
-                text(
-                    "NOT EXISTS (SELECT 1 FROM llm_processed p WHERE p.saved_item_id = saved_items.id)"
-                )
+            ensure_llm_batched_table(session)
+            session.commit()
+            if mirror_session is not None:
+                ensure_llm_batched_table(mirror_session)
+                mirror_session.commit()
+                
+            if selected_ids:
+                rows = session.execute(
+            select(SavedItem).where(
+                SavedItem.id.in_(selected_ids),
+                SavedItem.status.in_(["crawled", "crawled_wayback", "title_only"]),
             )
-
-        stmt = (
-            stmt.where(
-                text(
-                    "NOT EXISTS (SELECT 1 FROM llm_batched b WHERE b.saved_item_id = saved_items.id)"
-                )
-            )
-            .order_by(
-                STATUS_PRIORITY,
-                desc(func.length(func.coalesce(SavedItem.extracted_text, ""))),
-                SavedItem.id,
-            )
-            .limit(effective_limit)
-        )
-
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        written = 0
-        spent_est_usd = 0.0
-
-        with out_path.open("w", encoding="utf-8") as f:
-            for it in session.execute(stmt).scalars().all():
-                user_content = build_user_content(it)
-                input_chars = len(SYSTEM_PROMPT) + len(user_content)
-                est = estimate_cost_usd(input_chars)
-
-                if enforce_budget and written > 0 and (spent_est_usd + est) > BUDGET_USD:
-                    break
-
-                url = (it.canonical_url or it.raw_url or "").strip()
-                content_mode = "title_only" if it.status == "title_only" else "full"
-
-                payload = {
-                    "id": it.id,
-                    "canonical_url": (it.canonical_url or "").strip(),
-                    "source": (it.raw_url or "").strip(),
-                    "status": it.status,
-                    "max_completion_tokens": MAX_COMPLETION_TOKENS,
-                    "estimated_cost_usd": round(est, 6),
-                    "content_mode": content_mode,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_content},
-                    ],
-                }
-
-                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-
-                insert_llm_batched(session, it.id, url, str(out_path))
-                session.commit()
-
-                written += 1
-                spent_est_usd += est
-
+        ).scalars().all()
+                
+                row_map = {str(it.id): it for it in rows}
+                items = [row_map[sid] for sid in selected_ids if sid in row_map]
+                missing = [sid for sid in selected_ids if sid not in row_map]
+                
+                print(f"[make_batch_all] ids_file mode: requested={len(selected_ids)} found={len(items)} missing={len(missing)}")
+                if missing:
+                    print(f"[make_batch_all] missing IDs: {missing[:20]}")
+                
+                else:
+                    effective_limit = args.limit if args.limit is not None else TEMP_TOP_N
+                    llm_processed_exists = sqlite_table_exists(session, "llm_processed")
+                    if not llm_processed_exists:
+                        print("llm_processed table missing - skipping processed-items exclusion")
+                        
+                    stmt = select(SavedItem).where(
+                        SavedItem.status.in_(["crawled", "crawled_wayback", "title_only"])
+                        )
+                    
+                    if llm_processed_exists:
+                        stmt = stmt.where(
+                            text("NOT EXISTS (SELECT 1 FROM llm_processed p WHERE p.saved_item_id = saved_items.id)"))
+                        
+                    stmt = stmt.where(
+            text("NOT EXISTS (SELECT 1 FROM llm_batched b WHERE b.saved_item_id = saved_items.id)")
+        ).order_by(
+            STATUS_PRIORITY,
+            desc(func.length(func.coalesce(SavedItem.extracted_text, ""))),
+            SavedItem.id,
+        ).limit(effective_limit)
+                    
+                    items = session.execute(stmt).scalars().all()
+                
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                written = 0
+                spent_est_usd = 0.0
+                
+                with out_path.open("w", encoding="utf-8") as f:
+                    for it in items:
+                        user_content = build_user_content(it)
+                        input_chars = len(SYSTEM_PROMPT) + len(user_content)
+                        est = estimate_cost_usd(input_chars)
+                        url = (it.canonical_url or it.raw_url or "").strip()
+                        content_mode = "title_only" if it.status == "title_only" else "full"
+                        payload = {
+                "id": it.id,
+                "canonical_url": (it.canonical_url or "").strip(),
+                "source": (it.raw_url or "").strip(),
+                "status": it.status,
+                "max_completion_tokens": MAX_COMPLETION_TOKENS,
+                "estimated_cost_usd": round(est, 6),
+                "content_mode": content_mode,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+            }
+                        f.write(json.dumps(payload, ensure_ascii=False) + "")
+                        insert_llm_batched(session, it.id, url, str(out_path))
+                        session.commit()
+                        written += 1
+                        spent_est_usd += est
+                        
+                        if mirror_session is not None:
+                            insert_llm_batched(mirror_session, it.id, url, str(out_path))
+                            mirror_session.commit()
+                            
+                print(f"OK: wrote {written} items to {out_path}")
+        finally:
+                session.close()
                 if mirror_session is not None:
-                    try:
-                        insert_llm_batched(mirror_session, it.id, url, str(out_path))
-                        mirror_session.commit()
-                    except Exception as e:
-                        mirror_session.rollback()
-                        print(f"⚠ mirror llm_batched sync failed; local sqlite write kept: {e}")
-
-        print(f"OK: wrote {written} items to {out_path}")
-        print(
-            f"Estimated cost (cap={BUDGET_USD}): ${spent_est_usd:.4f} "
-            f"(max_completion_tokens={MAX_COMPLETION_TOKENS})"
-        )
-    finally:
-        session.close()
-        if mirror_session is not None:
-            mirror_session.close()
-
+                    mirror_session.close()
 
 if __name__ == "__main__":
     main()
 
+
+
+
+    
