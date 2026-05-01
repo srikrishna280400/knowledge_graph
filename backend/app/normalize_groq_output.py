@@ -146,9 +146,15 @@ def main():
             
             total += 1
             obj = json.loads(line)
+            http_status = obj.get("http_status")
+            parsed = obj.get("parsed")
             
             canonical_url = (obj.get("canonical_url") or "").strip()
             if not canonical_url:
+                bad += 1
+                continue
+
+            if http_status is None or int(http_status) >= 400 or parsed is None:
                 bad += 1
                 continue
             
