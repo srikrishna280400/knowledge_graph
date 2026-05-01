@@ -49,7 +49,7 @@ LOCAL_ENV = load_local_env()
 
 RUN_LIMIT = 2
 
-PIPELINE_REDDIT_CRAWL_LIMIT = 4
+PIPELINE_REDDIT_CRAWL_LIMIT = 3
 PIPELINE_LINKEDIN_CRAWL_LIMIT = 0
 PIPELINE_X_CRAWL_LIMIT = 0
 PIPELINE_GENERIC_CRAWL_LIMIT = 0
@@ -978,14 +978,9 @@ def main() -> None:
         )
 
         crawl_after_mirror = fetch_saved_items_by_ids(app_mirror_engine, touched_ids)
-        bad = [
-            sid for sid in touched_ids
-            if crawl_after_mirror.get(sid, {}).get("status") not in POST_CRAWL_STATUSES
-        ]
+        bad = [sid for sid in touched_ids if crawl_after_mirror.get(sid, {}).get("status") not in POST_CRAWL_STATUSES]
         if bad:
-            raise RuntimeError(
-                f"crawl verification failed in mirror; no rollback performed; bad_rows={len(bad)}"
-            )
+            raise RuntimeError(f"crawl verification failed in mirror; touched={len(touched_ids)} bad={len(bad)} ids={bad[:20]}")
 
         mark_step_done(engine, run_id, current_step)
 
@@ -1108,8 +1103,8 @@ def main() -> None:
             "--in", str(groq_out),
         ])
 
-        try:
-            normalized_storage_key = persist_intermediate_artifact(
+        
+        normalized_storage_key = persist_intermediate_artifact(
                 engine=engine,
                 run_id=run_id,
                 profile_id=profile_id,
@@ -1119,9 +1114,6 @@ def main() -> None:
                 bucket=args.storage_bucket,
                 storage_prefix=args.storage_prefix,
             )
-        except Exception:
-            delete_file_if_exists(normalized_out)
-            raise
 
         mark_step_done(
             engine,
