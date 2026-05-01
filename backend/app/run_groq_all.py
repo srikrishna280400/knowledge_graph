@@ -504,11 +504,13 @@ def main():
                 fcsv.flush()
 
                 save_to_db(local_sqlite_engine, result)
+                
                 if mirror_engine is not None:
                     try:
                         save_to_db(mirror_engine, result)
+                    
                     except Exception as e:
-                        print(f"⚠ mirror save failed; local sqlite write kept: {e}")
+                        raise RuntimeError(f"mirror save_to_db failed for {result.get('id')}: {e}") from e
 
                 time.sleep(2.2)
 
