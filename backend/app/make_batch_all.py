@@ -330,17 +330,7 @@ def main():
                     )
                 )
 
-            stmt = stmt.where(
-                text(
-                    "NOT EXISTS (SELECT 1 FROM llm_batched b "
-                    "WHERE b.saved_item_id = saved_items.id)"
-                )
-            ).order_by(
-                STATUS_PRIORITY,
-                desc(func.length(func.coalesce(SavedItem.extracted_text, ""))),
-                SavedItem.id,
-            ).limit(effective_limit)
-
+            
             items = session.execute(stmt).scalars().all()
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
