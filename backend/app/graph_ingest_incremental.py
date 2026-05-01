@@ -177,7 +177,7 @@ def ensure_schema(con: sqlite3.Connection) -> None:
           confidence REAL,
           batch_id TEXT,
           updated_at TEXT DEFAULT (datetime('now')),
-          PRIMARY KEY (source_node_id, concept_node_id)
+          PRIMARY KEY (source_node_id, concept_node_id, batch_id)
         );
         """
     )
@@ -193,7 +193,7 @@ def ensure_schema(con: sqlite3.Connection) -> None:
           strength REAL NOT NULL,
           batch_id TEXT,
           updated_at TEXT DEFAULT (datetime('now')),
-          PRIMARY KEY (source_node_id, target_node_id, method)
+          PRIMARY KEY (source_node_id, target_node_id, method, batch_id)
         );
         """
     )
@@ -207,7 +207,7 @@ def ensure_schema(con: sqlite3.Connection) -> None:
           strength REAL NOT NULL,
           batch_id TEXT,
           updated_at TEXT DEFAULT (datetime('now')),
-          PRIMARY KEY (source_node_id, target_node_id, method)
+          PRIMARY KEY (source_node_id, target_node_id, method, batch_id)
         );
         """
     )
@@ -297,7 +297,7 @@ def ensure_pg_graph_schema(pg_engine: Engine, schema: str) -> None:
           confidence DOUBLE PRECISION,
           batch_id TEXT,
           updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (source_node_id, concept_node_id)
+          PRIMARY KEY (source_node_id, concept_node_id, batch_id)
         )
         """,
 
@@ -309,7 +309,7 @@ def ensure_pg_graph_schema(pg_engine: Engine, schema: str) -> None:
           strength DOUBLE PRECISION NOT NULL,
           batch_id TEXT,
           updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (source_node_id, target_node_id, method)
+          PRIMARY KEY (source_node_id, target_node_id, method, batch_id)
         )
         """,
 
@@ -321,7 +321,7 @@ def ensure_pg_graph_schema(pg_engine: Engine, schema: str) -> None:
           strength DOUBLE PRECISION NOT NULL,
           batch_id TEXT,
           updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (source_node_id, target_node_id, method)
+          PRIMARY KEY (source_node_id, target_node_id, method, batch_id)
         )
         """,
 
